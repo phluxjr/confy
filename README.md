@@ -26,7 +26,7 @@ yay -S confy-tui
 ### manual install
 ```bash
 git clone https://github.com/Phluxjr23/confy.git
-...
+```
 
 ## dependencies
 
