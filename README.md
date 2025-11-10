@@ -18,12 +18,15 @@ simple tui for keeping track of all your config files in one place. no more hunt
 
 ## installation
 
+### from AUR (arch linux)
+```bash
+yay -S confy-tui
+```
+
+### manual install
 ```bash
 git clone https://github.com/Phluxjr23/confy.git
-cd confy
-chmod +x main.py
-sudo mv main.py /usr/local/bin/confy
-```
+...
 
 ## dependencies
 
