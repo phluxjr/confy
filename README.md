@@ -160,6 +160,3 @@ mit
 
 prs welcome! this is a simple tool but if you have ideas for improvements, open an issue or submit a pr.
 
-## btw
-
-i use arch btw
