@@ -154,7 +154,7 @@ ranger should work on windows via WSL or you can modify the code to use a differ
 
 ## license
 
-mit
+GPL-3.0
 
 ## contributing
 

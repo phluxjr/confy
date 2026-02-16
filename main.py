@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-
+# confy - a config manager for linux/unix systems
+# Copyright (C) 2025-2026 phluxjr
+# Licensed under GPL-3.0-or-later
 import curses
 import json
 import os
