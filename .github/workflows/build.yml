@@ -1,0 +1,38 @@
+name: build
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            output: confy-linux
+          - os: macos-latest
+            output: confy-macos
+          - os: windows-latest
+            output: confy-windows.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: install pyinstaller
+        run: pip install pyinstaller
+
+      - name: build
+        run: pyinstaller --onefile main.py --name ${{ matrix.output }}
+
+      - name: upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.output }}
