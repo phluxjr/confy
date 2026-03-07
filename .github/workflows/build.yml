@@ -35,9 +35,12 @@ jobs:
       - name: build
         run: pyinstaller --onefile main.py --name ${{ matrix.output }}
 
+      
       - name: upload to release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/${{ matrix.output }}
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
