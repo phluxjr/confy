@@ -1,0 +1,145 @@
+.TH CONFY 1 "2026-03-06" "2.1.0" "confy manual"
+.SH NAME
+confy \- a TUI config file manager for linux/unix systems
+.SH SYNOPSIS
+.B confy
+.SH DESCRIPTION
+.B confy
+is a terminal-based config file manager. track, organize, and edit your config files from a single interface. supports groups, sorting, fuzzy search, rollback, and custom colors.
+.SH NAVIGATION
+.TP
+.B j / DOWN
+move down
+.TP
+.B k / UP
+move up
+.TP
+.B ENTER
+open selected file in $EDITOR, or toggle group collapse
+.TP
+.B SPACE
+toggle group collapse
+.TP
+.B /
+enter search mode (fuzzy search by filename or group)
+.TP
+.B :
+enter command mode
+.TP
+.B q
+quit
+.SH COMMANDS
+commands are entered by pressing
+.B :
+followed by the command name and ENTER.
+.TP
+.B :q
+quit confy
+.TP
+.B :ac [group]
+add a config file. opens the built-in file picker. optionally specify a group name.
+.TP
+.B :rm
+remove the selected config file from tracking (does not delete the file)
+.TP
+.B :ag <name>
+add a new group
+.TP
+.B :rg <name>
+remove a group (files are moved to ungrouped)
+.TP
+.B :mg <name>
+move selected file to a group
+.TP
+.B :l
+reopen the last opened file
+.TP
+.B :rb
+rollback the selected file to its last backup (saved automatically before each edit)
+.TP
+.B :sort <name|date|size>
+change sort mode
+.TP
+.B :reverse
+toggle sort order between ascending and descending
+.TP
+.B :cd
+change the root directory used by the file picker
+.TP
+.B :cd reset
+reset the file picker root to ~/.config
+.SH FILE PICKER
+the built-in file picker replaces ranger. navigate with
+.B j/k
+or arrow keys,
+.B ENTER
+to open a directory or select a file,
+.B BACKSPACE
+to go up a directory, and
+.B q
+to cancel.
+.SH ROLLBACK
+when
+.B rollback
+is enabled in settings (default: true), confy automatically saves a compressed backup of a file to
+.I /tmp/<filename>.confbak
+before opening it for editing. to restore the backup, select the file and run
+.B :rb
+\&. a confirmation prompt will appear.
+.SH CONFIGURATION
+confy stores its data and settings in
+.I ~/.config/confy/config.json
+\&. if an older
+.I tracked.json
+is found, it will be automatically migrated.
+
+the
+.B settings
+key in config.json accepts the following options:
+.TP
+.B rollback
+boolean. enable/disable automatic backups before editing. default: true
+.TP
+.B colors
+object with keys:
+.B bg, fg, highlight, group, border
+\&. values can be a named color (e.g.
+.I "lavender", "cyan", "default"
+) or a hex code (e.g.
+.I "#cba6f7"
+).
+
+example config.json settings block:
+.PP
+.nf
+"settings": {
+  "rollback": true,
+  "colors": {
+    "bg": "default",
+    "fg": "default",
+    "highlight": "#cba6f7",
+    "group": "#89b4fa"
+  }
+}
+.fi
+.SH FILES
+.TP
+.I ~/.config/confy/config.json
+confy data and settings
+.TP
+.I /tmp/<filename>.confbak
+rollback backups (gzip compressed)
+.SH ENVIRONMENT
+.TP
+.B EDITOR
+the editor used to open config files. defaults to
+.B nano
+if not set.
+.SH AUTHOR
+phluxjr <phluxjr@phluxjr.net>
+.SH LICENSE
+GPL-3.0-or-later
+.SH SEE ALSO
+.BR nano (1),
+.BR vim (1),
+.BR nvim (1)
