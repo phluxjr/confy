@@ -4,7 +4,7 @@ a config manager for linux/unix based systems including macos (unix) and windows
 
 simple tui for keeping track of all your config files in one place. no more hunting through ~/.config.
 
-![confy-demo](https://github.com/user-attachments/assets/830e306f-9450-4ba0-8b44-06434cdd78f3)
+
 
 ## features
 
