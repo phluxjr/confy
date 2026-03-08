@@ -1,10 +1,14 @@
-# confy
+<p align="center">
+  <img src="confy-logo.png" alt="confy logo" width="256">
+</p>
 
-a config manager for linux/unix based systems including macos (unix) and windows.
+<h1 align="center">confy</h1>
 
-simple tui for keeping track of all your config files in one place. no more hunting through ~/.config.
+<p align="center">a config manager for linux/unix based systems including macos (unix) and windows.</p>
 
+<p align="center">simple tui for keeping track of all your config files in one place. no more hunting through ~/.config.</p>
 
+---
 
 ## features
 
@@ -24,13 +28,11 @@ simple tui for keeping track of all your config files in one place. no more hunt
 ## installation
 
 ### from AUR (arch linux)
-
 ```bash
 yay -S confy-tui
 ```
 
 ### manual install
-
 ```bash
 git clone https://gitlab.com/phluxjr/confy.git
 cd confy
@@ -100,7 +102,6 @@ rollback can be disabled in config.json:
 ### colors
 
 customize colors in `~/.config/confy/config.json` under `settings.colors`. values can be named colors or hex codes:
-
 ```json
 "settings": {
   "colors": {
@@ -163,7 +164,6 @@ organize related configs into groups, search through everything, sort however yo
 simple, fast, does one thing well.
 
 ## examples
-
 ```bash
 # start confy
 confy
@@ -209,17 +209,17 @@ on windows, change the config directory to where you keep your configs:
 # navigate to C:\Users\YourName\AppData\Local or wherever
 ```
 
-## license
+---
 
-GPL-3.0-or-later
+<p align="center">
+  <strong>copyright © 2025-2026 phluxjr</strong><br>
+  GPL-3.0-or-later
+</p>
 
-## contributing
+<p align="center">
+  prs welcome! this is a simple tool but if you have ideas for improvements, open an issue or submit a pr.
+</p>
 
-prs welcome! this is a simple tool but if you have ideas for improvements, open an issue or submit a pr.
-
-## man page
-
-a man page is included. after installing via AUR it's available automatically:
-```bash
-man confy
-```
+<p align="center">
+  <em>man page included - <code>man confy</code> after install</em>
+</p>
