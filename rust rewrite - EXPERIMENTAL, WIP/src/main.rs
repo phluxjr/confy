@@ -17,7 +17,6 @@ impl App {
             files: vec![
                 "~/.config/hypr/hyprland.conf".to_string(),
                 "~/.config/kitty/kitty.conf".to_string(),
-                "~/.blahrc".to_string(),
             ],
             state,
         }
