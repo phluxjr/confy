@@ -19,6 +19,7 @@ CONFIG_FILE  = CONFIG_DIR / "config.json"
 
 DEFAULT_SETTINGS = {
     "rollback": True,
+    "first_startup": True,
     "colors": {
         "bg":        "default",   # terminal default or hex like "#1e1e2e"
         "fg":        "default",
@@ -118,7 +119,12 @@ class FilePicker:
         except PermissionError:
             self.entries = [self.cwd.parent]
 
-    def run(self, stdscr):
+    def run(self, stdscr, pick_dir=False):
+        """
+        run the file picker.
+        pick_dir=False → returns selected file path (original behaviour)
+        pick_dir=True  → returns the cwd when the user quits (for :cd)
+        """
         self.load_entries()
         curses.curs_set(0)
 
@@ -126,8 +132,12 @@ class FilePicker:
             stdscr.clear()
             h, w = stdscr.getmaxyx()
 
-            stdscr.addstr(0, 1, f"pick a file: {self.cwd}", self.colors["group"])
-            stdscr.addstr(1, 1, "enter=open/select  q=cancel  backspace=up", self.colors["normal"])
+            if pick_dir:
+                stdscr.addstr(0, 1, f"set config dir: {self.cwd}", self.colors["group"])
+                stdscr.addstr(1, 1, "enter=open dir  q/esc=select this dir  backspace=up", self.colors["normal"])
+            else:
+                stdscr.addstr(0, 1, f"pick a file: {self.cwd}", self.colors["group"])
+                stdscr.addstr(1, 1, "enter=open/select  q=cancel  backspace=up", self.colors["normal"])
             stdscr.addstr(2, 0, "─" * w, self.colors["normal"])
 
             visible = h - 5
@@ -150,6 +160,8 @@ class FilePicker:
             key = stdscr.getch()
 
             if key in (ord('q'), 27):
+                if pick_dir:
+                    return str(self.cwd)
                 return None
             elif key in (ord('j'), curses.KEY_DOWN):
                 if self.selected < len(self.entries) - 1:
@@ -165,12 +177,121 @@ class FilePicker:
                     self.scroll = 0
                     self.load_entries()
                 else:
+                    if pick_dir:
+                        # selected a file in dir mode — just use the containing dir
+                        return str(self.cwd)
                     return str(entry)
             elif key in (curses.KEY_BACKSPACE, 127, 8):
                 self.cwd = self.cwd.parent
                 self.selected = 0
                 self.scroll = 0
                 self.load_entries()
+
+# ── tutorial popup sequence ───────────────────────────────────────────────────
+
+TUTORIAL_STEPS = [
+    (
+        "welcome to confy!",
+        [
+            "confy tracks your config files in one place.",
+            "use j/k (or arrow keys) to move up and down.",
+            "press enter to open a file in your $EDITOR.",
+            "",
+            "press any key for the next tip...",
+        ]
+    ),
+    (
+        "groups",
+        [
+            "files are organised into groups.",
+            "press enter or space on a group to collapse/expand it.",
+            "",
+            ":ag <name>  →  add a group",
+            ":rg <name>  →  remove a group (files go to ungrouped)",
+            ":mg <name>  →  move selected file to a group",
+            "",
+            "press any key for the next tip...",
+        ]
+    ),
+    (
+        "commands  (press : to enter)",
+        [
+            ":ac          →  add a config file (opens file picker)",
+            ":ac <group>  →  add directly to a group",
+            ":rm          →  remove selected file from tracking",
+            ":l           →  reopen last edited file",
+            ":cd          →  change the config search directory",
+            ":sort name|date|size  →  sort files",
+            ":reverse     →  flip sort order",
+            ":h           →  show this tutorial again",
+            ":help        →  show this tutorial again",
+            "",
+            "press any key for the next tip...",
+        ]
+    ),
+    (
+        "search  (press / to enter)",
+        [
+            "type to filter files and groups live.",
+            "press enter to confirm, esc to clear.",
+            "",
+            "rollback  (:rb)",
+            "confy saves a backup to /tmp whenever you",
+            "open a file for editing. :rb restores it.",
+            "set  \"rollback\": false  in config to disable.",
+            "",
+            "press any key for the next tip...",
+        ]
+    ),
+    (
+        "that's it!",
+        [
+            "tip: set your $EDITOR env var to your preferred",
+            "editor (vim, nvim, nano, micro, etc.).",
+            "",
+            "for full docs run:  man confy",
+            "(or just poke around, there isn't much to break!)",
+            "",
+            "press any key to start...",
+        ]
+    ),
+]
+
+def show_tutorial(stdscr, colors, draw_bg):
+    """show the first-startup tutorial popup sequence overlaid on the main ui"""
+    curses.curs_set(0)
+    n = colors.get("normal", 0)
+    g = colors.get("group", 0)
+
+    for step_num, (title, lines) in enumerate(TUTORIAL_STEPS):
+        # repaint the app behind the popup so it looks like an overlay
+        draw_bg()
+
+        h, w = stdscr.getmaxyx()
+
+        content_w = min(62, w - 4)
+        content_h = len(lines) + 4
+        py = max(0, h // 2 - content_h // 2)
+        px = max(0, w // 2 - content_w // 2)
+
+        try:
+            win = curses.newwin(content_h, content_w, py, px)
+            win.bkgd(' ', n)
+            win.box()
+            # title in the top border
+            title_str = f" {title} "
+            win.addstr(0, max(1, (content_w - len(title_str)) // 2), title_str, g)
+            # step counter in bottom border
+            counter = f" {step_num + 1}/{len(TUTORIAL_STEPS)} "
+            win.addstr(content_h - 1, max(1, content_w - len(counter) - 1), counter, n)
+            # content lines
+            for i, line in enumerate(lines):
+                win.addstr(2 + i, 2, line[:content_w - 4], n)
+            win.refresh()
+        except:
+            pass
+
+        stdscr.getch()
 
 # ── main app ──────────────────────────────────────────────────────────────────
 
@@ -179,7 +300,6 @@ class Confy:
         self.groups = {"ungrouped": []}
         self.selected = 0
         self.page = 0
-        self.items_per_page = 10
         self.command_mode = False
         self.search_mode = False
         self.command_buffer = ""
@@ -193,9 +313,17 @@ class Confy:
         self.settings = dict(DEFAULT_SETTINGS)
         self.popup_message = None
         self.colors = {}
+        self.show_tutorial = False  # resolved after load_data
         self.migrate_if_needed()
         self.load_data()
         self.rebuild_flat_view()
+
+    def items_per_page(self, stdscr):
+        """compute how many items fit given current terminal height"""
+        h, _ = stdscr.getmaxyx()
+        # header: rows 0-2 (3 rows), footer: rows h-2, h-1 (2 rows), row 3 is spacer
+        # usable rows start at 4, end at h-3 inclusive
+        return max(1, h - 6)
 
     def migrate_if_needed(self):
         """migrate tracked.json -> config.json if needed"""
@@ -205,22 +333,28 @@ class Confy:
             self.popup_message = "migrated tracked.json → config.json!"
 
     def load_data(self):
-        if CONFIG_FILE.exists():
-            with open(CONFIG_FILE, 'r') as f:
-                data = json.load(f)
-                if 'files' in data:
-                    self.groups = {"ungrouped": data['files']}
-                else:
-                    self.groups = data.get('groups', {"ungrouped": []})
-                self.last_opened = data.get('last_opened')
-                self.collapsed_groups = set(data.get('collapsed_groups', []))
-                self.sort_mode = data.get('sort_mode', 'name')
-                self.sort_order = data.get('sort_order', 'asc')
-                # load user settings, merging with defaults
-                user_settings = data.get('settings', {})
-                self.settings.update(user_settings)
-                if 'colors' in user_settings:
-                    self.settings['colors'] = {**DEFAULT_SETTINGS['colors'], **user_settings['colors']}
+        if not CONFIG_FILE.exists():
+            # genuine first run — no config file yet
+            self.show_tutorial = True
+            return
+        with open(CONFIG_FILE, 'r') as f:
+            data = json.load(f)
+        if 'files' in data:
+            self.groups = {"ungrouped": data['files']}
+        else:
+            self.groups = data.get('groups', {"ungrouped": []})
+        self.last_opened = data.get('last_opened')
+        self.collapsed_groups = set(data.get('collapsed_groups', []))
+        self.sort_mode = data.get('sort_mode', 'name')
+        self.sort_order = data.get('sort_order', 'asc')
+        self.config_dir = data.get('config_dir', str(Path.home() / ".config"))
+        # load user settings, merging with defaults
+        user_settings = data.get('settings', {})
+        self.settings.update(user_settings)
+        if 'colors' in user_settings:
+            self.settings['colors'] = {**DEFAULT_SETTINGS['colors'], **user_settings['colors']}
+        # show tutorial only if explicitly flagged true in saved config
+        self.show_tutorial = self.settings.get('first_startup', False)
 
     def save_data(self):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -231,6 +365,7 @@ class Confy:
                 'collapsed_groups': list(self.collapsed_groups),
                 'sort_mode': self.sort_mode,
                 'sort_order': self.sort_order,
+                'config_dir': self.config_dir,
                 'settings': self.settings,
             }, f, indent=2)
 
@@ -336,7 +471,7 @@ class Confy:
 
     def add_config(self, stdscr, group_name="ungrouped"):
         picker = FilePicker(self.config_dir, self.colors)
-        filepath = picker.run(stdscr)
+        filepath = picker.run(stdscr, pick_dir=False)
         if filepath:
             for grp_files in self.groups.values():
                 if filepath in grp_files:
@@ -418,6 +553,26 @@ class Confy:
         self.last_opened = filepath
         self.save_data()
 
+    def change_config_dir(self, stdscr, direct_path=None):
+        """change the config search directory used by the file picker"""
+        if direct_path:
+            # :cd <path> — set directly if it exists
+            p = Path(direct_path).expanduser().resolve()
+            if p.is_dir():
+                self.config_dir = str(p)
+                self.save_data()
+                self.popup_message = f"config dir → {self.config_dir}"
+            else:
+                self.popup_message = f"not a directory: {direct_path}"
+        else:
+            # :cd — interactive picker in dir-select mode
+            picker = FilePicker(self.config_dir, self.colors)
+            new_dir = picker.run(stdscr, pick_dir=True)
+            if new_dir:
+                self.config_dir = new_dir
+                self.save_data()
+                self.popup_message = f"config dir → {self.config_dir}"
+
     # ── drawing ───────────────────────────────────────────────────────────────
 
     def draw(self, stdscr):
@@ -439,8 +594,15 @@ class Confy:
             pass
         stdscr.addstr(2, 0, "═" * (width - 1), n)
 
-        start_idx = self.page * self.items_per_page
-        end_idx = min(start_idx + self.items_per_page, len(self.flat_view))
+        ipp = self.items_per_page(stdscr)
+        total_pages = max(1, (len(self.flat_view) + ipp - 1) // ipp)
+
+        # clamp page if terminal was resized
+        if self.page >= total_pages:
+            self.page = max(0, total_pages - 1)
+
+        start_idx = self.page * ipp
+        end_idx = min(start_idx + ipp, len(self.flat_view))
 
         for i in range(start_idx, end_idx):
             y = 4 + (i - start_idx)
@@ -482,7 +644,6 @@ class Confy:
                 except:
                     pass
 
-        total_pages = max(1, (len(self.flat_view) + self.items_per_page - 1) // self.items_per_page)
         bottom_y = height - 2
         try:
             stdscr.addstr(bottom_y, 0, "═" * (width - 1), n)
@@ -532,15 +693,19 @@ class Confy:
             self.remove_group(parts[1])
         elif parts[0] == "mg" and len(parts) == 2:
             self.move_to_group(parts[1])
+        elif cmd in ("h", "help"):
+            show_tutorial(stdscr, self.colors, lambda: self.draw(stdscr))
         elif cmd == "l":
             if self.last_opened and os.path.exists(self.last_opened):
                 self.open_file(self.last_opened)
         elif cmd == "cd":
-            picker = FilePicker(self.config_dir, self.colors)
-            # pick a dir: just navigate until they quit, use cwd as result
-            picker.run(stdscr)  # returns file, but cwd changes as they browse
+            self.change_config_dir(stdscr)
         elif cmd == "cd reset":
             self.config_dir = str(Path.home() / ".config")
+            self.save_data()
+            self.popup_message = f"config dir reset to {self.config_dir}"
+        elif parts[0] == "cd" and len(parts) == 2:
+            self.change_config_dir(stdscr, direct_path=parts[1])
         elif parts[0] == "sort" and len(parts) == 2:
             if parts[1] in ["name", "date", "size"]:
                 self.sort_mode = parts[1]
@@ -575,21 +740,35 @@ class Confy:
     def run(self, stdscr):
         self.colors = init_colors(self.settings.get('colors', DEFAULT_SETTINGS['colors']))
         curses.curs_set(0)
-        stdscr.timeout(100)
+        # no timeout — blocking getch() prevents constant redraws and flicker
+
+        # first-startup tutorial
+        if self.show_tutorial:
+            show_tutorial(stdscr, self.colors, lambda: self.draw(stdscr))
+            self.settings['first_startup'] = False
+            self.save_data()
+
+        self.draw(stdscr)
 
         while True:
-            self.draw(stdscr)
-
-            # clear popup after one frame
+            # show popup: draw to reveal it, wait for keypress, clear and redraw
             if self.popup_message:
+                self.draw(stdscr)
                 stdscr.getch()
                 self.popup_message = None
+                self.draw(stdscr)
                 continue
 
             try:
                 key = stdscr.getch()
             except:
                 continue
+
+            if key == -1:
+                continue  # spurious wakeup, skip redraw
+
+            ipp = self.items_per_page(stdscr)
+            total_pages = max(1, (len(self.flat_view) + ipp - 1) // ipp)
 
             if self.command_mode:
                 if key == ord('\n'):
@@ -635,12 +814,12 @@ class Confy:
                 elif key in (ord('j'), curses.KEY_DOWN):
                     if self.selected < len(self.flat_view) - 1:
                         self.selected += 1
-                        if self.selected >= (self.page + 1) * self.items_per_page:
+                        if self.selected >= (self.page + 1) * ipp:
                             self.page += 1
                 elif key in (ord('k'), curses.KEY_UP):
                     if self.selected > 0:
                         self.selected -= 1
-                        if self.selected < self.page * self.items_per_page:
+                        if self.selected < self.page * ipp:
                             self.page -= 1
                 elif key == ord('\n'):
                     if self.flat_view and self.selected < len(self.flat_view):
@@ -653,6 +832,8 @@ class Confy:
                     self.toggle_group()
                 elif key == ord('q'):
                     break
+
+            self.draw(stdscr)
 
 
 def main():
