@@ -10,7 +10,7 @@
     packages = forAllSystems (pkgs: {
       default = pkgs.python3Packages.buildPythonApplication {
         pname = "confy-tui";
-        version = "2.1.2";
+        version = "3.0.0";
         src = ./.;
         format = "pyproject";
         nativeBuildInputs = [ pkgs.python3Packages.hatchling ];

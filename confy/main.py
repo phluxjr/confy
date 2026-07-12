@@ -6,6 +6,7 @@ import curses
 import json
 import os
 import gzip
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,12 +15,15 @@ from datetime import datetime
 CONFIG_DIR = Path.home() / ".config" / "confy"
 TRACKED_FILE = CONFIG_DIR / "tracked.json"  # legacy
 CONFIG_FILE  = CONFIG_DIR / "config.json"
+MOUNT_ROOT   = Path.home() / ".cache" / "confy" / "mounts"  # sshfs mountpoints live here
+SSHFS_URL    = "https://github.com/libfuse/sshfs"
 
 # ── default app config (user can override in config.json under "settings") ────
 
 DEFAULT_SETTINGS = {
     "rollback": True,
     "first_startup": True,
+    "theme": "catppuccin",
     "colors": {
         "bg":        "default",   # terminal default or hex like "#1e1e2e"
         "fg":        "default",
@@ -27,6 +31,35 @@ DEFAULT_SETTINGS = {
         "group":     "#89b4fa",   # catppuccin blue
         "border":    "default",
     }
+}
+
+# ── built-in themes (:theme <name>) ─────────────────────────────────────────
+# each theme is a full colors dict, same shape as DEFAULT_SETTINGS["colors"]
+THEMES = {
+    "catppuccin": {
+        "bg": "default", "fg": "default",
+        "highlight": "#cba6f7", "group": "#89b4fa", "border": "default",
+    },
+    "dracula": {
+        "bg": "default", "fg": "default",
+        "highlight": "#bd93f9", "group": "#8be9fd", "border": "default",
+    },
+    "gruvbox": {
+        "bg": "default", "fg": "default",
+        "highlight": "#fabd2f", "group": "#83a598", "border": "default",
+    },
+    "nord": {
+        "bg": "default", "fg": "default",
+        "highlight": "#88c0d0", "group": "#81a1c1", "border": "default",
+    },
+    "tokyo-night": {
+        "bg": "default", "fg": "default",
+        "highlight": "#bb9af7", "group": "#7aa2f7", "border": "default",
+    },
+    "one-dark": {
+        "bg": "default", "fg": "default",
+        "highlight": "#c678dd", "group": "#61afef", "border": "default",
+    },
 }
 
 # ── color helpers ─────────────────────────────────────────────────────────────
@@ -178,7 +211,7 @@ class FilePicker:
                     self.load_entries()
                 else:
                     if pick_dir:
-                        # selected a file in dir mode — just use the containing dir
+                        # selected a file in dir mode, just use the containing dir
                         return str(self.cwd)
                     return str(entry)
             elif key in (curses.KEY_BACKSPACE, 127, 8):
@@ -186,6 +219,245 @@ class FilePicker:
                 self.selected = 0
                 self.scroll = 0
                 self.load_entries()
+
+# ── device mode (remote profiles over sshfs) ───────────────────────────────
+
+def parse_ssh_config():
+    """parse ~/.ssh/config for Host aliases -> resolved user@hostname.
+    returns a dict like {"phluxjr": "will@phluxjr.net"}. best-effort, never raises."""
+    ssh_config_path = Path.home() / ".ssh" / "config"
+    aliases = {}
+    if not ssh_config_path.exists():
+        return aliases
+    try:
+        current_hosts = []
+        current_hostname = None
+        current_user = None
+
+        def flush():
+            if not current_hosts:
+                return
+            hostname = current_hostname
+            user = current_user
+            for h in current_hosts:
+                if h == "*":
+                    continue
+                resolved_host = hostname or h
+                if user:
+                    aliases[h] = f"{user}@{resolved_host}"
+                else:
+                    aliases[h] = resolved_host
+
+        with open(ssh_config_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.split(None, 1)
+                if len(parts) != 2:
+                    continue
+                key, val = parts[0].lower(), parts[1].strip()
+                if key == "host":
+                    flush()
+                    current_hosts = val.split()
+                    current_hostname = None
+                    current_user = None
+                elif key == "hostname":
+                    current_hostname = val
+                elif key == "user":
+                    current_user = val
+            flush()
+    except Exception:
+        pass
+    return aliases
+
+def resolve_device_target(arg):
+    """resolve a :device argument to a user@host string.
+    checks ssh config aliases first, falls back to treating arg as literal."""
+    aliases = parse_ssh_config()
+    if arg in aliases:
+        return aliases[arg]
+    return arg
+
+def sshfs_available():
+    return shutil.which("sshfs") is not None
+
+class DeviceManager:
+    """handles mounting/unmounting a remote host's confy config dir via sshfs"""
+
+    @staticmethod
+    def _is_mounted(mountpoint):
+        """check if something is already mounted at this path (via /proc/mounts, linux-only
+        but that's the realistic target here; falls back to False on other platforms)"""
+        try:
+            with open('/proc/mounts', 'r') as f:
+                return any(str(mountpoint) in line for line in f)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _clear_stale_mount(mountpoint):
+        """best-effort cleanup of a leftover mount/broken mountpoint from a previous
+        session (crash, kill -9, unclean shutdown, etc). returns (ok, message)."""
+        if not mountpoint.exists():
+            return True, None
+
+        if DeviceManager._is_mounted(mountpoint):
+            # something's still attached here, try to unmount it first
+            if not DeviceManager.unmount(mountpoint):
+                return False, (
+                    f"a stale mount is stuck at {mountpoint} and couldn't be freed. "
+                    f"try manually: fusermount -u {mountpoint}"
+                )
+
+        # after unmounting (or if it was never mounted), confirm we can actually touch it.
+        # a mountpoint left behind by a crashed sshfs process can end up owned/locked in a
+        # way that makes even the owning user unable to write to it.
+        try:
+            test_file = mountpoint / ".confy_write_test"
+            test_file.touch()
+            test_file.unlink()
+        except PermissionError:
+            return False, (
+                f"can't access {mountpoint} (leftover from a previous mount?). "
+                f"try manually: fusermount -u {mountpoint} && rm -rf {mountpoint}"
+            )
+        except Exception as e:
+            return False, f"couldn't verify mountpoint {mountpoint}: {e}"
+
+        return True, None
+
+    @staticmethod
+    def resolve_remote_home(target):
+        """ssh in briefly to ask the remote shell for $HOME. returns (ok, home_path_or_error)"""
+        try:
+            result = subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target, "echo $HOME"],
+                capture_output=True, text=True, timeout=15
+            )
+            if result.returncode != 0:
+                err = result.stderr.strip() or "ssh connection failed"
+                return False, err
+            home = result.stdout.strip()
+            if not home:
+                return False, "remote returned an empty $HOME"
+            return True, home
+        except subprocess.TimeoutExpired:
+            return False, "ssh timed out resolving remote home dir"
+        except FileNotFoundError:
+            return False, "ssh not found on this system"
+        except Exception as e:
+            return False, f"ssh error: {e}"
+
+    @staticmethod
+    def mount(target, mount_name):
+        """mount the remote host's entire root filesystem (/) to a local mountpoint,
+        so absolute tracked paths (like /etc/jail.conf) resolve correctly through the
+        mount instead of colliding with local paths of the same name.
+        returns (success, message, mountpoint_path_or_None, remote_home_or_None)"""
+        if not sshfs_available():
+            return False, f"sshfs not found. install it: {SSHFS_URL}", None, None
+
+        ok, home_or_err = DeviceManager.resolve_remote_home(target)
+        if not ok:
+            return False, f"couldn't reach {target}: {home_or_err}", None, None
+        remote_home = home_or_err
+
+        mountpoint = MOUNT_ROOT / mount_name
+
+        try:
+            mountpoint.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            return False, f"can't create mountpoint {mountpoint} (permission denied)", None, None
+
+        ok, err = DeviceManager._clear_stale_mount(mountpoint)
+        if not ok:
+            return False, err, None, None
+
+        # mount the remote's root filesystem, not just the confy dir, so absolute paths
+        # like /etc/jail.conf resolve to <mountpoint>/etc/jail.conf and both stat and
+        # $EDITOR see the real remote file instead of a same-named local one
+        remote_path = f"{target}:/"
+
+        # allow_root is required so that a root process (e.g. via pkexec for :su)
+        # can actually see/write through this mount. without it, FUSE only exposes
+        # the mount to the mounting user, and root gets an empty/inaccessible view,
+        # which is exactly the "empty read-only buffer" failure mode :su hit.
+        base_opts = "reconnect,ServerAliveInterval=15,ServerAliveCountMax=3"
+        su_will_work = True
+
+        try:
+            result = subprocess.run(
+                ["sshfs", remote_path, str(mountpoint), "-o", f"{base_opts},allow_root"],
+                capture_output=True, text=True, timeout=20
+            )
+            if result.returncode != 0:
+                err = result.stderr.strip() or "unknown sshfs error"
+                if "allow_root" in err or "user_allow_other" in err:
+                    # local system doesn't have user_allow_other in /etc/fuse.conf.
+                    # fall back to a normal mount so :device still works, just without :su.
+                    su_will_work = False
+                    result = subprocess.run(
+                        ["sshfs", remote_path, str(mountpoint), "-o", base_opts],
+                        capture_output=True, text=True, timeout=20
+                    )
+                    if result.returncode != 0:
+                        err2 = result.stderr.strip() or "unknown sshfs error"
+                        return False, f"sshfs failed: {err2}", None, None
+                else:
+                    return False, f"sshfs failed: {err}", None, None
+        except subprocess.TimeoutExpired:
+            return False, "sshfs timed out, check host/network", None, None
+        except FileNotFoundError:
+            return False, f"sshfs not found. install it: {SSHFS_URL}", None, None
+        except Exception as e:
+            return False, f"sshfs error: {e}", None, None
+
+        msg = "mounted" if su_will_work else (
+            "mounted (:su won't work here, add 'user_allow_other' to /etc/fuse.conf to enable it)"
+        )
+        return True, msg, mountpoint, remote_home
+
+    @staticmethod
+    def to_local_path(mountpoint, remote_abs_path):
+        """translate an absolute remote path (as stored in the remote's config.json,
+        e.g. /etc/jail.conf) to its local location under the root-mounted sshfs tree."""
+        # strip a leading slash so it joins cleanly under the mountpoint
+        rel = str(remote_abs_path).lstrip('/')
+        return mountpoint / rel
+
+    @staticmethod
+    def unmount(mountpoint):
+        """unmount a previously mounted device. tries fusermount, falls back to umount."""
+        try:
+            result = subprocess.run(["fusermount", "-u", str(mountpoint)],
+                                     capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass
+        try:
+            result = subprocess.run(["umount", str(mountpoint)],
+                                     capture_output=True, text=True, timeout=10)
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    @staticmethod
+    def check_remote_format(confy_dir):
+        """inspect the remote's confy dir (already resolved through the mount) to sanity-check
+        it before switching over. returns one of: 'ok' (config.json present),
+        'legacy' (only tracked.json, old version), 'empty' (neither exists, fresh remote),
+        'unreachable' (can't even list the dir)"""
+        try:
+            entries = os.listdir(confy_dir)
+        except Exception:
+            return "unreachable"
+        if "config.json" in entries:
+            return "ok"
+        if "tracked.json" in entries:
+            return "legacy"
+        return "empty"
 
 # ── tutorial popup sequence ───────────────────────────────────────────────────
 
@@ -196,6 +468,7 @@ TUTORIAL_STEPS = [
             "confy tracks your config files in one place.",
             "use j/k (or arrow keys) to move up and down.",
             "press enter to open a file in your $EDITOR.",
+            "press p to toggle a live preview pane.",
             "",
             "press any key for the next tip...",
         ]
@@ -223,6 +496,11 @@ TUTORIAL_STEPS = [
             ":cd          →  change the config search directory",
             ":sort name|date|size  →  sort files",
             ":reverse     →  flip sort order",
+            ":theme <name>  →  switch color theme",
+            ":device <host>  →  browse a remote host's configs",
+            "  (needs sshfs)",
+            ":device local  →  back to local configs",
+            ":su  →  edit selected file as root (needs polkit)",
             ":h           →  show this tutorial again",
             ":help        →  show this tutorial again",
             "",
@@ -314,6 +592,15 @@ class Confy:
         self.popup_message = None
         self.colors = {}
         self.show_tutorial = False  # resolved after load_data
+        self.preview_enabled = False  # toggled with 'p', persisted in settings
+        # ── device mode (remote profiles over sshfs) ──
+        self.active_config_dir = CONFIG_DIR    # repointed at a mount when a device is active
+        self.active_config_file = CONFIG_FILE
+        self.device_name = None                # None = local, else display name like "phluxjr"
+        self.device_mountpoint = None           # Path to the root-mounted sshfs tree, if any
+        self.device_remote_home = None          # remote $HOME, needed to locate its confy dir under the mount
+        self.device_su_available = True         # whether :su works on the current mount (fuse.conf dependent)
+        self._local_state = None                # stashed local state while a device is mounted
         self.migrate_if_needed()
         self.load_data()
         self.rebuild_flat_view()
@@ -326,19 +613,54 @@ class Confy:
         return max(1, h - 6)
 
     def migrate_if_needed(self):
-        """migrate tracked.json -> config.json if needed"""
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        if not CONFIG_FILE.exists() and TRACKED_FILE.exists():
-            shutil.copy(TRACKED_FILE, CONFIG_FILE)
+        """migrate tracked.json -> config.json if needed, for the currently active config location"""
+        self.active_config_dir.mkdir(parents=True, exist_ok=True)
+        legacy = self.active_config_dir / "tracked.json"
+        if not self.active_config_file.exists() and legacy.exists():
+            shutil.copy(legacy, self.active_config_file)
             self.popup_message = "migrated tracked.json → config.json!"
 
+    def _reset_to_defaults(self):
+        """reset in-memory state to a blank slate. used whenever load_data decides
+        there's nothing valid to load (missing/empty/corrupt config), so stale state
+        from a previous session (e.g. local, before a :device switch) doesn't linger."""
+        self.groups = {"ungrouped": []}
+        self.last_opened = None
+        self.collapsed_groups = set()
+        self.sort_mode = "name"
+        self.sort_order = "asc"
+        self.settings = dict(DEFAULT_SETTINGS)
+        self.preview_enabled = False
+        # note: config_dir is intentionally NOT reset here, it's expected to already be
+        # set to a sane default by the caller (local home, or remote home on a device)
+
     def load_data(self):
-        if not CONFIG_FILE.exists():
-            # genuine first run — no config file yet
+        if not self.active_config_file.exists():
+            # genuine first run, no config file yet
+            self._reset_to_defaults()
             self.show_tutorial = True
             return
-        with open(CONFIG_FILE, 'r') as f:
-            data = json.load(f)
+        try:
+            with open(self.active_config_file, 'r') as f:
+                raw = f.read()
+            if not raw.strip():
+                # file exists but is empty (e.g. mid-write, or a fresh touch'd file)
+                self.popup_message = f"{self.active_config_file.name} is empty, starting fresh"
+                self._reset_to_defaults()
+                self.show_tutorial = True
+                return
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            self.popup_message = f"couldn't parse {self.active_config_file.name}: {e}"
+            self._reset_to_defaults()
+            self.show_tutorial = True
+            return
+        except OSError as e:
+            self.popup_message = f"couldn't read {self.active_config_file.name}: {e}"
+            self._reset_to_defaults()
+            self.show_tutorial = True
+            return
+
         if 'files' in data:
             self.groups = {"ungrouped": data['files']}
         else:
@@ -347,7 +669,7 @@ class Confy:
         self.collapsed_groups = set(data.get('collapsed_groups', []))
         self.sort_mode = data.get('sort_mode', 'name')
         self.sort_order = data.get('sort_order', 'asc')
-        self.config_dir = data.get('config_dir', str(Path.home() / ".config"))
+        self.config_dir = data.get('config_dir', self.config_dir or str(Path.home() / ".config"))
         # load user settings, merging with defaults
         user_settings = data.get('settings', {})
         self.settings.update(user_settings)
@@ -355,10 +677,11 @@ class Confy:
             self.settings['colors'] = {**DEFAULT_SETTINGS['colors'], **user_settings['colors']}
         # show tutorial only if explicitly flagged true in saved config
         self.show_tutorial = self.settings.get('first_startup', False)
+        self.preview_enabled = data.get('preview_enabled', False)
 
     def save_data(self):
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with open(CONFIG_FILE, 'w') as f:
+        self.active_config_dir.mkdir(parents=True, exist_ok=True)
+        with open(self.active_config_file, 'w') as f:
             json.dump({
                 'groups': self.groups,
                 'last_opened': self.last_opened,
@@ -367,32 +690,204 @@ class Confy:
                 'sort_order': self.sort_order,
                 'config_dir': self.config_dir,
                 'settings': self.settings,
+                'preview_enabled': self.preview_enabled,
             }, f, indent=2)
+
+    # ── themes ────────────────────────────────────────────────────────────────
+
+    def set_theme(self, name):
+        """apply a built-in theme by name, persist it, and re-init curses colors live"""
+        name = name.strip().lower()
+        if name not in THEMES:
+            names = ", ".join(THEMES.keys())
+            self.popup_message = f"unknown theme '{name}'. options: {names}"
+            return
+        self.settings['theme'] = name
+        self.settings['colors'] = dict(THEMES[name])
+        self.save_data()
+        # re-init colors immediately so it applies without restarting
+        self.colors = init_colors(self.settings['colors'])
+        self.popup_message = f"theme → {name}"
+
+    # ── device mode (remote profiles) ────────────────────────────────────────
+
+    def _snapshot_state(self):
+        """capture the in-memory state that's swapped when entering/leaving device mode"""
+        return {
+            'groups': self.groups,
+            'last_opened': self.last_opened,
+            'collapsed_groups': self.collapsed_groups,
+            'sort_mode': self.sort_mode,
+            'sort_order': self.sort_order,
+            'config_dir': self.config_dir,
+            'settings': self.settings,
+            'preview_enabled': self.preview_enabled,
+            'active_config_dir': self.active_config_dir,
+            'active_config_file': self.active_config_file,
+        }
+
+    def _restore_state(self, snap):
+        self.groups = snap['groups']
+        self.last_opened = snap['last_opened']
+        self.collapsed_groups = snap['collapsed_groups']
+        self.sort_mode = snap['sort_mode']
+        self.sort_order = snap['sort_order']
+        self.config_dir = snap['config_dir']
+        self.settings = snap['settings']
+        self.preview_enabled = snap['preview_enabled']
+        self.active_config_dir = snap['active_config_dir']
+        self.active_config_file = snap['active_config_file']
+
+    def resolve_local_path(self, tracked_path):
+        """translate a tracked file's path into the path confy should actually stat/open.
+        locally this is a no-op; on a mounted device, absolute remote paths get rewritten
+        to live under the root-mounted sshfs tree (e.g. /etc/jail.conf ->
+        <mountpoint>/etc/jail.conf) so stat/open see the real remote file."""
+        if self.device_mountpoint is None:
+            return tracked_path
+        return str(DeviceManager.to_local_path(self.device_mountpoint, tracked_path))
+
+    def resolve_tracked_path(self, local_path):
+        """reverse of resolve_local_path: given a path the file picker returned (which,
+        on a mounted device, lives under the sshfs mountpoint), convert it back to the
+        original remote absolute path for storage in config.json. locally this is a no-op."""
+        if self.device_mountpoint is None:
+            return local_path
+        try:
+            rel = Path(local_path).relative_to(self.device_mountpoint)
+            return "/" + str(rel)
+        except ValueError:
+            # picked path wasn't under the mount somehow, store as-is rather than crash
+            return local_path
+
+    def switch_device(self, arg, stdscr):
+        """handle :device / :ssh <target-or-alias>. mounts the remote host's root filesystem
+        over sshfs and switches the live view to its tracked configs. 'local' switches back."""
+        arg = arg.strip()
+        if not arg or arg.lower() == "local":
+            self.switch_to_local()
+            return
+
+        if not sshfs_available():
+            self.popup_message = f"sshfs not found. install it: {SSHFS_URL}"
+            return
+
+        target = resolve_device_target(arg)
+        mount_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', target)
+
+        self.popup_message = f"connecting to {target}..."
+        self.draw(stdscr)
+
+        # if we're already on a device, unmount it cleanly first
+        if self.device_mountpoint is not None:
+            DeviceManager.unmount(self.device_mountpoint)
+
+        ok, msg, mountpoint, remote_home = DeviceManager.mount(target, mount_name)
+        if not ok:
+            self.popup_message = msg
+            return
+        # mount() returns a descriptive success message when :su won't work on this
+        # mount (fuse.conf doesn't allow_root locally); "mounted" means everything's fine
+        device_su_available = (msg == "mounted")
+
+        confy_dir = DeviceManager.to_local_path(mountpoint, f"{remote_home}/.config/confy")
+
+        fmt = DeviceManager.check_remote_format(confy_dir)
+        if fmt == "unreachable":
+            DeviceManager.unmount(mountpoint)
+            self.popup_message = f"couldn't read remote confy dir on {target}"
+            return
+        if fmt == "legacy":
+            DeviceManager.unmount(mountpoint)
+            self.popup_message = (
+                f"{target} is running an older confy (tracked.json, no config.json). "
+                f"update confy on that host first."
+            )
+            return
+        # fmt is "ok" or "empty" -- both fine to proceed with
+
+        # stash local state on first hop into device mode
+        if self._local_state is None:
+            self._local_state = self._snapshot_state()
+
+        self.device_name = arg if arg in parse_ssh_config() else target
+        self.device_mountpoint = mountpoint
+        self.device_remote_home = remote_home
+        self.device_su_available = device_su_available
+        self.active_config_dir = confy_dir
+        self.active_config_file = confy_dir / "config.json"
+        # sane default in case the remote's config.json doesn't specify one (fresh remote)
+        self.config_dir = f"{remote_home}/.config"
+
+        # reset transient view state and load the remote data fresh
+        self.selected = 0
+        self.page = 0
+        self.search_buffer = ""
+        self.search_mode = False
+        self.settings = dict(DEFAULT_SETTINGS)
+        self.popup_message = None
+        self.migrate_if_needed()
+        self.load_data()
+        self.rebuild_flat_view()
+
+        if self.popup_message:
+            # load_data hit a parse/read error, surface that instead of a fake success message
+            self.popup_message = f"device → {self.device_name}, but {self.popup_message}"
+        elif not device_su_available:
+            self.popup_message = f"device → {self.device_name}. note: {msg}"
+        else:
+            note = "" if fmt == "ok" else " (empty, nothing tracked there yet)"
+            self.popup_message = f"device → {self.device_name}{note}"
+
+    def switch_to_local(self):
+        """unmount the active device (if any) and restore local state"""
+        if self.device_mountpoint is None:
+            self.popup_message = "already local"
+            return
+
+        DeviceManager.unmount(self.device_mountpoint)
+        self.device_mountpoint = None
+        self.device_remote_home = None
+        self.device_name = None
+        self.device_su_available = True
+
+        if self._local_state is not None:
+            self._restore_state(self._local_state)
+            self._local_state = None
+
+        self.selected = 0
+        self.page = 0
+        self.rebuild_flat_view()
+        self.popup_message = "device → local"
 
     # ── rollback ──────────────────────────────────────────────────────────────
 
     def save_backup(self, filepath):
-        """save compressed backup of filepath to /tmp"""
+        """save compressed backup of filepath to /tmp. filepath is the tracked
+        (original/remote) path, translated internally to the local/mounted location."""
         if not self.settings.get('rollback', True):
             return
+        local_path = self.resolve_local_path(filepath)
         try:
             bak_name = Path(filepath).name + ".confbak"
             bak_path = Path("/tmp") / bak_name
-            with open(filepath, 'rb') as f_in:
+            with open(local_path, 'rb') as f_in:
                 with gzip.open(bak_path, 'wb') as f_out:
                     shutil.copyfileobj(f_in, f_out)
         except Exception:
             pass
 
     def rollback(self, filepath):
-        """restore backup for filepath, returns (success, message)"""
+        """restore backup for filepath, returns (success, message).
+        filepath is the tracked (original/remote) path, translated internally."""
+        local_path = self.resolve_local_path(filepath)
         bak_name = Path(filepath).name + ".confbak"
         bak_path = Path("/tmp") / bak_name
         if not bak_path.exists():
             return False, "no backup found in /tmp"
         try:
             with gzip.open(bak_path, 'rb') as f_in:
-                with open(filepath, 'wb') as f_out:
+                with open(local_path, 'wb') as f_out:
                     shutil.copyfileobj(f_in, f_out)
             return True, f"rolled back {Path(filepath).name}!"
         except Exception as e:
@@ -423,9 +918,9 @@ class Confy:
         if self.sort_mode == "name":
             sorted_files = sorted(files, key=lambda f: Path(f).name.lower())
         elif self.sort_mode == "date":
-            sorted_files = sorted(files, key=lambda f: os.path.getmtime(f) if os.path.exists(f) else 0)
+            sorted_files = sorted(files, key=lambda f: os.path.getmtime(self.resolve_local_path(f)) if os.path.exists(self.resolve_local_path(f)) else 0)
         elif self.sort_mode == "size":
-            sorted_files = sorted(files, key=lambda f: os.path.getsize(f) if os.path.exists(f) else 0)
+            sorted_files = sorted(files, key=lambda f: os.path.getsize(self.resolve_local_path(f)) if os.path.exists(self.resolve_local_path(f)) else 0)
         else:
             sorted_files = files
         if self.sort_order == "desc":
@@ -452,8 +947,10 @@ class Confy:
                         self.flat_view.append(('file', filepath, group_name))
 
     def get_file_info(self, filepath):
+        """filepath is the tracked (original/remote) path; translated internally
+        so this works transparently whether local or on a mounted device."""
         try:
-            stat = os.stat(filepath)
+            stat = os.stat(self.resolve_local_path(filepath))
             mtime = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M')
             size = self.format_size(stat.st_size)
             return mtime, size
@@ -467,12 +964,48 @@ class Confy:
             size /= 1024
         return f"{size:.1f}TB"
 
+    def get_preview_lines(self, filepath, max_lines, max_width):
+        """read up to max_lines from filepath for the preview pane, truncating long lines.
+        filepath is the tracked (original/remote) path; translated internally.
+        returns a list of display strings, never raises."""
+        local_path = self.resolve_local_path(filepath)
+        try:
+            if not os.path.exists(local_path):
+                return ["(file not found)"]
+            if os.path.isdir(local_path):
+                return ["(directory, nothing to preview)"]
+            if os.path.getsize(local_path) > 5 * 1024 * 1024:
+                return ["(file too large to preview, 5MB+)"]
+            lines = []
+            with open(local_path, 'r', errors='replace') as f:
+                for i, line in enumerate(f):
+                    if i >= max_lines:
+                        lines.append("...")
+                        break
+                    line = line.rstrip('\n')
+                    if len(line) > max_width:
+                        line = line[:max_width - 1] + "…"
+                    lines.append(line)
+            if not lines:
+                return ["(empty file)"]
+            return lines
+        except UnicodeDecodeError:
+            return ["(binary file, cannot preview)"]
+        except PermissionError:
+            return ["(permission denied)"]
+        except Exception as e:
+            return [f"(error reading file: {e})"]
+
     # ── file operations ───────────────────────────────────────────────────────
 
     def add_config(self, stdscr, group_name="ungrouped"):
-        picker = FilePicker(self.config_dir, self.colors)
-        filepath = picker.run(stdscr, pick_dir=False)
-        if filepath:
+        # when a device is mounted, browse the config_dir as it exists on the remote,
+        # i.e. under the sshfs mountpoint, not confy's own local filesystem
+        browse_root = self.resolve_local_path(self.config_dir) if self.device_mountpoint else self.config_dir
+        picker = FilePicker(browse_root, self.colors)
+        picked = picker.run(stdscr, pick_dir=False)
+        if picked:
+            filepath = self.resolve_tracked_path(picked)
             for grp_files in self.groups.values():
                 if filepath in grp_files:
                     self.popup_message = "already tracked!"
@@ -540,11 +1073,14 @@ class Confy:
             self.rebuild_flat_view()
 
     def open_file(self, filepath):
+        """filepath is the tracked (original/remote) path. the editor is launched on the
+        translated local path so it edits the real file, whether local or mounted."""
         self.save_backup(filepath)
+        local_path = self.resolve_local_path(filepath)
         editor = os.environ.get('EDITOR', 'nano')
         curses.endwin()
         try:
-            subprocess.run([editor, filepath])
+            subprocess.run([editor, local_path])
         except FileNotFoundError:
             input(f"error: editor '{editor}' not found. press enter...")
         except Exception as e:
@@ -553,10 +1089,47 @@ class Confy:
         self.last_opened = filepath
         self.save_data()
 
+    def open_file_elevated(self, filepath):
+        """:su <selected file>, open with local root via pkexec. works on whatever
+        path is currently in view, local or sshfs-mounted: pkexec only sees a plain
+        local path either way, so this is 'local root, on the current path', nothing
+        fancier. does not attempt to become a different user on a remote host."""
+        if shutil.which("pkexec") is None:
+            self.popup_message = "pkexec not found, can't elevate (needs polkit)"
+            return
+
+        if self.device_mountpoint is not None and not self.device_su_available:
+            self.popup_message = (
+                "can't :su through this mount, add 'user_allow_other' to "
+                "/etc/fuse.conf and reconnect (:device local, then :device again)"
+            )
+            return
+
+        self.save_backup(filepath)
+        local_path = self.resolve_local_path(filepath)
+        editor = os.environ.get('EDITOR', 'nano')
+        editor_path = shutil.which(editor)
+        if editor_path is None:
+            self.popup_message = f"editor '{editor}' not found on PATH"
+            return
+
+        curses.endwin()
+        try:
+            result = subprocess.run(["pkexec", editor_path, local_path])
+            if result.returncode != 0:
+                input(f"pkexec exited with code {result.returncode} (auth cancelled/failed?). press enter...")
+        except FileNotFoundError:
+            input("error: pkexec not found. press enter...")
+        except Exception as e:
+            input(f"error opening file with pkexec: {e}. press enter...")
+        curses.doupdate()
+        self.last_opened = filepath
+        self.save_data()
+
     def change_config_dir(self, stdscr, direct_path=None):
         """change the config search directory used by the file picker"""
         if direct_path:
-            # :cd <path> — set directly if it exists
+            # :cd <path>, set directly if it exists
             p = Path(direct_path).expanduser().resolve()
             if p.is_dir():
                 self.config_dir = str(p)
@@ -565,7 +1138,7 @@ class Confy:
             else:
                 self.popup_message = f"not a directory: {direct_path}"
         else:
-            # :cd — interactive picker in dir-select mode
+            # :cd, interactive picker in dir-select mode
             picker = FilePicker(self.config_dir, self.colors)
             new_dir = picker.run(stdscr, pick_dir=True)
             if new_dir:
@@ -582,6 +1155,13 @@ class Confy:
         g = self.colors.get("group", 0)
 
         stdscr.addstr(0, 1, "confy", g)
+        if self.device_name:
+            device_text = f"  [remote: {self.device_name}]"
+            err = self.colors.get("error", g)
+            try:
+                stdscr.addstr(0, 6, device_text, err)
+            except:
+                pass
         last_text = f"previous: {{{Path(self.last_opened).name if self.last_opened else 'none'}}}"
         stdscr.addstr(1, 1, last_text, n)
 
@@ -593,6 +1173,16 @@ class Confy:
         except:
             pass
         stdscr.addstr(2, 0, "═" * (width - 1), n)
+
+        # when preview is on, split the screen: list on the left, preview on the right,
+        # separated by a vertical divider. list keeps a sane minimum width so it
+        # doesn't get crushed on narrow terminals.
+        preview_on = self.preview_enabled and width >= 60
+        if preview_on:
+            list_width = max(30, width // 2 - 1)
+            divider_x = list_width + 1
+        else:
+            list_width = width
 
         ipp = self.items_per_page(stdscr)
         total_pages = max(1, (len(self.flat_view) + ipp - 1) // ipp)
@@ -617,7 +1207,7 @@ class Confy:
                 if i == self.selected:
                     line += " <"
                 try:
-                    stdscr.addstr(y, 1, line[:width-2], attr)
+                    stdscr.addstr(y, 1, line[:list_width-2], attr)
                 except:
                     pass
 
@@ -626,10 +1216,15 @@ class Confy:
                 filename = Path(filepath).name
                 directory = str(Path(filepath).parent)
                 mtime, size = self.get_file_info(filepath)
-                exists = os.path.exists(filepath)
+                exists = os.path.exists(self.resolve_local_path(filepath))
 
-                col_width = max(10, (width - 60) // 2)
-                line = f"  {filename[:col_width]:<{col_width}} | {directory[:col_width]:<{col_width}} | {mtime} | {size}"
+                if preview_on:
+                    # narrower layout, just filename + directory, no mtime/size (not enough room)
+                    col_width = max(8, (list_width - 6) // 2)
+                    line = f"  {filename[:col_width]:<{col_width}} | {directory[:col_width]:<{col_width}}"
+                else:
+                    col_width = max(10, (width - 60) // 2)
+                    line = f"  {filename[:col_width]:<{col_width}} | {directory[:col_width]:<{col_width}} | {mtime} | {size}"
 
                 if i == self.selected:
                     line += " <"
@@ -640,9 +1235,42 @@ class Confy:
                     attr = n
 
                 try:
-                    stdscr.addstr(y, 1, line[:width-2], attr)
+                    stdscr.addstr(y, 1, line[:list_width-2], attr)
                 except:
                     pass
+
+        # preview pane
+        if preview_on:
+            try:
+                for y in range(3, height - 2):
+                    stdscr.addstr(y, divider_x, "│", n)
+            except:
+                pass
+
+            preview_x = divider_x + 2
+            preview_w = width - preview_x - 1
+            preview_h = height - 5  # rows 4..height-2
+
+            selected_item = self.flat_view[self.selected] if self.flat_view and self.selected < len(self.flat_view) else None
+
+            if selected_item is None:
+                header = "(nothing selected)"
+                body_lines = []
+            elif selected_item[0] == 'group':
+                header = f"{selected_item[1]}/"
+                file_count = len(self.groups[selected_item[1]])
+                body_lines = [f"{file_count} file(s) in this group", "", "select a file to preview it"]
+            else:
+                filepath = selected_item[1]
+                header = Path(filepath).name
+                body_lines = self.get_preview_lines(filepath, preview_h - 2, preview_w)
+
+            try:
+                stdscr.addstr(3, preview_x, header[:preview_w], g)
+                for j, line in enumerate(body_lines[:preview_h - 1]):
+                    stdscr.addstr(5 + j, preview_x, line[:preview_w], n)
+            except:
+                pass
 
         bottom_y = height - 2
         try:
@@ -655,7 +1283,8 @@ class Confy:
         elif self.search_mode:
             page_text = f"page {self.page + 1}/{total_pages} ▌ /{self.search_buffer}"
         else:
-            page_text = f"page {self.page + 1}/{total_pages} ▌"
+            preview_hint = " ▌ p: preview on" if preview_on else " ▌ p: preview off"
+            page_text = f"page {self.page + 1}/{total_pages}{preview_hint}"
 
         try:
             stdscr.addstr(bottom_y + 1, 1, page_text[:width-2], n)
@@ -730,6 +1359,27 @@ class Confy:
                     self.popup_message = "select a file first"
             else:
                 self.popup_message = "nothing selected"
+        elif cmd == "theme":
+            names = ", ".join(THEMES.keys())
+            self.popup_message = f"themes: {names}"
+        elif parts[0] == "theme" and len(parts) == 2:
+            self.set_theme(parts[1])
+        elif parts[0] in ("device", "ssh") and len(parts) == 2:
+            self.switch_device(parts[1], stdscr)
+        elif cmd in ("device", "ssh"):
+            if self.device_name:
+                self.popup_message = f"currently on device: {self.device_name}"
+            else:
+                self.popup_message = "usage: :device <alias-or-user@host>, or :device local"
+        elif cmd == "su":
+            if self.flat_view and self.selected < len(self.flat_view):
+                item = self.flat_view[self.selected]
+                if item[0] == 'file':
+                    self.open_file_elevated(item[1])
+                else:
+                    self.popup_message = "select a file first, not a group"
+            else:
+                self.popup_message = "nothing selected"
 
         self.command_buffer = ""
         self.command_mode = False
@@ -740,7 +1390,7 @@ class Confy:
     def run(self, stdscr):
         self.colors = init_colors(self.settings.get('colors', DEFAULT_SETTINGS['colors']))
         curses.curs_set(0)
-        # no timeout — blocking getch() prevents constant redraws and flicker
+        # no timeout, blocking getch() prevents constant redraws and flicker
 
         # first-startup tutorial
         if self.show_tutorial:
@@ -830,6 +1480,9 @@ class Confy:
                             self.toggle_group()
                 elif key == ord(' '):
                     self.toggle_group()
+                elif key == ord('p'):
+                    self.preview_enabled = not self.preview_enabled
+                    self.save_data()
                 elif key == ord('q'):
                     break
 
@@ -838,7 +1491,12 @@ class Confy:
 
 def main():
     app = Confy()
-    curses.wrapper(app.run)
+    try:
+        curses.wrapper(app.run)
+    finally:
+        # always clean up a mounted device on exit, even on crash/ctrl-c
+        if app.device_mountpoint is not None:
+            DeviceManager.unmount(app.device_mountpoint)
 
 if __name__ == "__main__":
     main()

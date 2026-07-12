@@ -1,0 +1,32 @@
+lang = "en"
+extensions = ["md", "qmd", "txt"]
+content_dir = ""
+ignored_words = ["AUR", "AppData", "GPL", "YourName", "ag", "bg", "bsd", "cd", "chmod", "conf", "confbak", "config", "configs", "confy", "esc", "fg", "hypr", "hyprland", "init", "json", "keybinds", "keypress", "linux", "ln", "lua", "macos", "nvim", "phluxjr", "prs", "pwd", "py", "rb", "rc", "rg", "sudo", "tmp", "tui", "ungrouped", "unix", "usr", "yay"]
+
+[[checks]]
+name = "wc"
+rule = "word_count"
+
+[[checks]]
+name = "repeats"
+rule = "repeat"
+
+[[checks]]
+name = "TODO"
+rule = "ban_pattern"
+pattern = "@todo"
+
+[[checks]]
+name = "weasel"
+rule = "ban_pattern"
+pattern = "@weasel"
+
+[[checks]]
+name = "passive"
+rule = "ban_pattern"
+pattern = "@passive"
+
+[[checks]]
+name = "status"
+rule = "frontmatter"
+field = "status"

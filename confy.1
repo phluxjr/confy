@@ -1,11 +1,11 @@
-.TH CONFY 1 "2026-03-06" "2.1.0" "confy manual"
+.TH CONFY 1 "2026-07-12" "3.0.0" "confy manual"
 .SH NAME
 confy \- a TUI config file manager for linux/unix systems
 .SH SYNOPSIS
 .B confy
 .SH DESCRIPTION
 .B confy
-is a terminal-based config file manager. track, organize, and edit your config files from a single interface. supports groups, sorting, fuzzy search, rollback, and custom colors.
+is a terminal-based config file manager. track, organize, and edit your config files from a single interface. supports groups, sorting, fuzzy search, rollback, custom colors and themes, a live preview pane, elevated editing via polkit, and browsing a remote host's tracked configs over sshfs.
 .SH NAVIGATION
 .TP
 .B j / DOWN
@@ -19,6 +19,9 @@ open selected file in $EDITOR, or toggle group collapse
 .TP
 .B SPACE
 toggle group collapse
+.TP
+.B p
+toggle live preview pane
 .TP
 .B /
 enter search mode (fuzzy search by filename or group)
@@ -57,6 +60,44 @@ reopen the last opened file
 .B :rb
 rollback the selected file to its last backup (saved automatically before each edit)
 .TP
+.B :su
+open the selected file with root via
+.BR pkexec (1)
+\&. works on local files and on files viewed through a mounted
+.B :device
+alike. requires polkit; requires
+.I user_allow_other
+in
+.I /etc/fuse.conf
+to work through a mounted device.
+.TP
+.B :device <host>
+.TQ
+.B :ssh <host>
+mount a remote host's root filesystem over sshfs and switch to browsing its tracked configs.
+.I host
+may be an alias from
+.I ~/.ssh/config
+or a literal
+.IR user@host .
+requires
+.BR sshfs (1)
+\&. refuses to connect if the remote is running a pre-3.0.0 confy without
+.IR config.json .
+.TP
+.B :device local
+switch back to local configs and unmount the active device
+.TP
+.B :device
+with no arguments, show the currently active device, if any
+.TP
+.B :theme <name>
+switch color theme. built-in themes:
+.IR catppuccin ", " dracula ", " gruvbox ", " nord ", " tokyo-night ", " one-dark
+.TP
+.B :theme
+with no arguments, list available themes
+.TP
 .B :sort <name|date|size>
 change sort mode
 .TP
@@ -89,6 +130,63 @@ is enabled in settings (default: true), confy automatically saves a compressed b
 before opening it for editing. to restore the backup, select the file and run
 .B :rb
 \&. a confirmation prompt will appear.
+.SH REMOTE PROFILES
+.B :device <host>
+mounts a remote machine's entire filesystem to a local mountpoint under
+.I ~/.cache/confy/mounts/
+via
+.BR sshfs (1)
+and switches confy's active view to that host's tracked configs. absolute tracked paths (e.g.
+.IR /etc/jail.conf )
+are transparently translated to their location under the mount, so stat, preview, edit, and rollback all operate on the real remote file.
+
+while a device is active, the header shows
+.I [remote: <host>]
+\&. run
+.B :device local
+to unmount and return to your own configs; the local session's state is preserved exactly as it was.
+
+if the remote host cannot be reached, or is running a version of confy that predates
+.IR config.json ,
+confy refuses to switch rather than guessing at an incompatible format.
+.SH ELEVATED EDITING
+.B :su
+opens the selected file with root privileges via
+.BR pkexec (1)
+instead of the normal
+.BR $EDITOR " invocation. this operates on whatever local path is currently in view, whether that's a plain local file or a file resolved through an active "
+.B :device
+mount.
+
+on a mounted device, this matters because sshfs presents remote files under your local user's identity; a remote file owned by a different user (e.g. a root-owned
+.IR /etc/pf.conf )
+may not be writable through the mount normally. local root, reached via
+.BR pkexec ,
+can write through the mount regardless, since permissions on the mount are enforced the same way as any other local path.
+
+.B :su
+requires
+.BR pkexec (1)
+(polkit) to be installed. to use
+.B :su
+while a device is mounted, the local machine additionally needs
+.I user_allow_other
+uncommented in
+.I /etc/fuse.conf
+\&, so that a root process can see into a mount owned by an unprivileged user. confy will report clearly if this isn't the case rather than silently opening an empty buffer.
+.SH THEMES
+confy ships with six built-in themes, set via
+.B :theme <name>
+in command mode:
+.IR catppuccin " (default), " dracula ", " gruvbox ", " nord ", " tokyo-night ", " one-dark
+\&. theme changes apply immediately and are saved to
+.I config.json
+under
+.IR settings.theme ", overwriting " settings.colors " with the theme's palette."
+.SH PREVIEW PANE
+press
+.B p
+to toggle a live preview pane beside the file list, showing the first lines of the currently selected file. the preview reads through the same path resolution as editing does, so it reflects the real file whether local or on a mounted device. the preference persists across restarts.
 .SH CONFIGURATION
 confy stores its data and settings in
 .I ~/.config/confy/config.json
@@ -102,6 +200,13 @@ key in config.json accepts the following options:
 .TP
 .B rollback
 boolean. enable/disable automatic backups before editing. default: true
+.TP
+.B theme
+string. name of the active built-in theme. setting this via
+.B :theme
+also overwrites
+.B colors
+with that theme's palette.
 .TP
 .B colors
 object with keys:
@@ -117,6 +222,7 @@ example config.json settings block:
 .nf
 "settings": {
   "rollback": true,
+  "theme": "catppuccin",
   "colors": {
     "bg": "default",
     "fg": "default",
@@ -132,6 +238,10 @@ confy data and settings
 .TP
 .I /tmp/<filename>.confbak
 rollback backups (gzip compressed)
+.TP
+.I ~/.cache/confy/mounts/<host>/
+sshfs mountpoints created by
+.B :device
 .SH ENVIRONMENT
 .TP
 .B EDITOR
@@ -145,4 +255,6 @@ GPL-3.0-or-later
 .SH SEE ALSO
 .BR nano (1),
 .BR vim (1),
-.BR nvim (1)
+.BR nvim (1),
+.BR sshfs (1),
+.BR pkexec (1)

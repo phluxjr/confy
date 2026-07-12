@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "confy-tui"
-version = "2.1.2"
+version = "3.0.0"
 description = "a config manager for linux/unix systems"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }

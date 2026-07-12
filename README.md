@@ -17,12 +17,16 @@
 * **search** - real-time fuzzy search through all your configs
 * **multiple sort modes** - sort by name, date modified, or file size
 * **open in $EDITOR** - edit files with one keypress
+* **elevated editing** - `:su` opens the selected file with root via polkit
+* **remote profiles** - `:device <host>` mounts and browses another machine's tracked configs over sshfs
+* **live preview pane** - toggle a side-by-side file preview with `p`
+* **built-in themes** - catppuccin, dracula, gruvbox, nord, tokyo-night, one-dark, switch with `:theme`
 * **remembers last file** - quick access to recently edited configs
 * **built-in file picker** - no external dependencies, navigate with vim keys
 * **rollback** - automatic compressed backups before every edit, restore with `:rb`
 * **custom colors** - set colors via config.json, supports hex and named colors
 * **vim-style keybinds** - j/k navigation, command mode
-* **lightweight and fast** - pure python with curses, zero dependencies
+* **lightweight and fast** - pure python with curses, zero required dependencies
 * **cross-platform** - works on linux, macos, bsd, windows
 
 ## installation
@@ -47,7 +51,13 @@ sudo install -Dm644 confy.1 /usr/share/man/man1/confy.1
 * python3
 * curses (included with python)
 
-that's it. no ranger, no external tools.
+that's it for core functionality, no ranger, no external tools.
+
+two commands need optional system tools:
+* `:device` (remote profiles) needs [`sshfs`](https://github.com/libfuse/sshfs) installed
+* `:su` (elevated editing) needs `pkexec` (polkit), and for use with `:device`, `user_allow_other` set in `/etc/fuse.conf` on your local machine
+
+confy will tell you clearly if either is missing rather than crashing.
 
 ## usage
 
@@ -58,6 +68,7 @@ just run `confy` in your terminal
 * `j/k` or `arrow keys` - move up/down
 * `enter` - open file in $EDITOR (or toggle group)
 * `space` - toggle group expand/collapse
+* `p` - toggle live preview pane
 * `/` - search mode
 * `:` - command mode
 * `q` - quit
@@ -70,6 +81,16 @@ just run `confy` in your terminal
 * `:rm` - remove selected file from tracking (does not delete the file)
 * `:l` - open last edited file
 * `:rb` - rollback selected file to last backup
+* `:su` - open selected file with root via pkexec (needs polkit)
+
+#### remote profiles
+* `:device <host>` or `:ssh <host>` - mount and browse a remote host's tracked configs over sshfs (accepts an `~/.ssh/config` alias or a literal `user@host`)
+* `:device local` - switch back to your local configs
+* `:device` (no args) - show the currently active device, if any
+
+#### appearance
+* `:theme <name>` - switch color theme (`catppuccin`, `dracula`, `gruvbox`, `nord`, `tokyo-night`, `one-dark`)
+* `:theme` (no args) - list available themes
 
 #### group management
 * `:ag <group>` - add new group
@@ -117,6 +138,40 @@ named colors: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `whi
 
 hex colors require a terminal that supports 256 colors (most do).
 
+### themes
+
+confy ships with six built-in themes: `catppuccin` (default), `dracula`, `gruvbox`, `nord`, `tokyo-night`, and `one-dark`. switch with:
+```
+:theme dracula
+```
+this applies instantly and persists to config.json, no restart needed. run `:theme` with no arguments to list all available themes.
+
+### preview pane
+
+press `p` to toggle a live preview pane alongside your file list. it shows the first lines of the selected file, updating as you move the selection. the preview reads through the same path resolution as everything else, so it works correctly on a mounted `:device` too. your preference persists across restarts.
+
+### remote profiles (`:device`)
+
+`:device <host>` mounts a remote machine's entire filesystem over sshfs and switches confy's view to that host's tracked configs, letting you browse and edit them exactly like local files.
+
+```
+:device phluxjr           # resolves an alias from ~/.ssh/config
+:device phluxjr@exam.ple  # or connect directly
+:device local             # switch back to your own configs
+```
+
+requires [`sshfs`](https://github.com/libfuse/sshfs) installed locally. if the remote host is running an older confy that predates `config.json` (i.e. still on `tracked.json`), confy will refuse to connect and ask you to update confy there first, rather than guessing at an incompatible format.
+
+while on a device, the header shows `[remote: <host>]` so it's always clear you're not looking at your local files. edits, previews, sorting, and rollback all operate on the real remote files through the mount.
+
+### elevated editing (`:su`)
+
+select a file and run `:su` to open it with root, via `pkexec`. this works on local files and on files viewed through a mounted `:device` alike, since `pkexec` just elevates whatever local path is currently in view.
+
+on a mounted device, this is genuinely useful: sshfs presents remote files under your own uid, so root-owned remote files (like `/etc/pf.conf`) may be unreadable/unwritable normally. `:su` gives you local root, which can write through the mount even when your regular user can't.
+
+this needs `pkexec` (polkit) installed. for `:su` to work while a device is mounted, your **local** machine also needs `user_allow_other` uncommented in `/etc/fuse.conf` (a one-time system config change, confy will tell you if it's missing and reconnecting the device is enough to pick it up after you set it).
+
 ### search mode
 
 press `/` to enter search mode, then start typing:
@@ -145,13 +200,15 @@ full example config.json:
   },
   "settings": {
     "rollback": true,
+    "theme": "catppuccin",
     "colors": {
       "bg": "default",
       "fg": "default",
       "highlight": "#cba6f7",
       "group": "#89b4fa"
     }
-  }
+  },
+  "preview_enabled": false
 }
 ```
 
@@ -190,6 +247,17 @@ confy
 
 # oops, broke your config
 :rb           # rollback to last backup
+
+# switch to a nicer theme
+:theme tokyo-night
+
+# toggle a live preview while browsing
+p
+
+# check on your server's system configs
+:device phluxjr
+:su           # edit a root-owned file like /etc/pf.conf
+:device local # back to your own machine
 ```
 
 ## tips
@@ -208,6 +276,8 @@ on windows, change the config directory to where you keep your configs:
 :cd
 # navigate to C:\Users\YourName\AppData\Local or wherever
 ```
+
+`:device` and `:su` rely on sshfs/FUSE and polkit, both linux-specific, so they're not available on windows or macos. everything else works cross-platform.
 
 ---
 
