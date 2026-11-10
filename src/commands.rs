@@ -11,21 +11,57 @@ pub enum CmdResult {
     NeedCdPicker,
     NeedGitDirPicker,
     NeedBouncer,
+    NeedThemeWizard,
+    NeedThemeBrowser,
+    NeedStats,
+    NeedDiff { path: String },
+    NeedHooks,
+    NeedImport { candidates: Vec<crate::import::ImportCandidate> },
     NeedCommitMsg { then_push: bool },
 }
 
 pub fn handle(app: &mut App, raw: &str) -> CmdResult {
-    let cmd   = raw.trim();
+    let cmd = raw.trim();
     let parts: Vec<&str> = cmd.splitn(2, char::is_whitespace).collect();
-    let verb  = parts[0];
-    let arg   = parts.get(1).map(|s| s.trim()).unwrap_or("");
+    let verb = parts[0];
+    let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
     match (verb, arg) {
         ("q" | "quit", _) => return CmdResult::Quit,
 
+        ("stats", _) => return CmdResult::NeedStats,
+
+        ("diff", _) => {
+            if let Some(path) = app.selected_file().map(String::from) {
+                return CmdResult::NeedDiff { path };
+            }
+            app.popup = Some("select a file first".into());
+        }
+
+        ("hooks", _) => return CmdResult::NeedHooks,
+
+        ("import", source) => {
+            if app.mount.is_some() {
+                app.popup = Some("switch to the local device before importing".into());
+            } else {
+                match crate::import::discover(if source.is_empty() { None } else { Some(source) }) {
+                    Ok(candidates) => return CmdResult::NeedImport { candidates },
+                    Err(error) => app.popup = Some(error.to_string()),
+                }
+            }
+        },
+
         // ── file tracking ─────────────────────────────────────────────────────
-        ("ac", "") => return CmdResult::NeedPicker { group: "ungrouped".into() },
-        ("ac", g)  => return CmdResult::NeedPicker { group: g.to_string() },
+        ("ac", "") => {
+            return CmdResult::NeedPicker {
+                group: "ungrouped".into(),
+            };
+        }
+        ("ac", g) => {
+            return CmdResult::NeedPicker {
+                group: g.to_string(),
+            };
+        }
 
         ("rm", _) => {
             if app.selected_file().is_some() {
@@ -53,7 +89,7 @@ pub fn handle(app: &mut App, raw: &str) -> CmdResult {
             if let Some(p) = app.selected_file().map(String::from) {
                 match app.rollback(&p) {
                     Ok(msg) => app.popup = Some(msg),
-                    Err(e)  => app.popup = Some(e.to_string()),
+                    Err(e) => app.popup = Some(e.to_string()),
                 }
             } else {
                 app.popup = Some("select a file first".into());
@@ -64,7 +100,7 @@ pub fn handle(app: &mut App, raw: &str) -> CmdResult {
         ("su", _) => {
             if let Some(p) = app.selected_file().map(String::from) {
                 match app.open_file_elevated(&p) {
-                    Ok(_)  => {}
+                    Ok(_) => {}
                     Err(e) => app.popup = Some(e.to_string()),
                 }
             } else {
@@ -84,13 +120,17 @@ pub fn handle(app: &mut App, raw: &str) -> CmdResult {
             app.rebuild_flat_view();
         }
         ("reverse", _) => {
-            app.cfg.sort_order = if app.cfg.sort_order == "asc" { "desc".into() } else { "asc".into() };
+            app.cfg.sort_order = if app.cfg.sort_order == "asc" {
+                "desc".into()
+            } else {
+                "asc".into()
+            };
             app.save();
             app.rebuild_flat_view();
         }
 
         // ── config dir ────────────────────────────────────────────────────────
-        ("cd", "")      => return CmdResult::NeedCdPicker,
+        ("cd", "") => return CmdResult::NeedCdPicker,
         ("cd", "reset") => {
             app.cfg.config_dir = dirs::home_dir()
                 .map(|h| h.join(".config").to_string_lossy().into_owned())
@@ -111,27 +151,61 @@ pub fn handle(app: &mut App, raw: &str) -> CmdResult {
 
         // ── themes ────────────────────────────────────────────────────────────
         ("theme", "") => {
-            let names = builtin_themes().keys().cloned().collect::<Vec<_>>().join(", ");
-            app.popup = Some(format!("themes: {names}"));
+            let all = app.all_theme_names();
+            app.popup = Some(format!("themes: {}", all.join(", ")));
         }
-        ("theme", name) => {
-            match app.set_theme(name) {
-                Ok(_)  => app.popup = Some(format!("theme → {name}")),
+        ("theme", "list") => {
+            let builtin: Vec<String> = builtin_themes().keys().cloned().map(String::from).collect();
+            let custom = crate::config::load_custom_themes();
+            let custom_names: Vec<String> = custom.keys().cloned().collect();
+            let mut msg = format!("built-in: {}", builtin.join(", "));
+            if !custom_names.is_empty() {
+                msg.push_str(&format!("\ncustom:   {}", custom_names.join(", ")));
+            }
+            msg.push_str("\n\n:theme new  →  create a custom theme");
+            msg.push_str("\n:themenet   →  browse community themes");
+            app.popup = Some(msg);
+        }
+        ("theme", "new" | "create") => {
+            return CmdResult::NeedThemeWizard;
+        }
+        ("theme", "delete" | "rm") => {
+            app.popup = Some("usage: :theme delete <name>  (custom themes only)".into());
+        }
+        ("theme", name) if name.starts_with("delete ") || name.starts_with("rm ") => {
+            let target = name
+                .split_once(char::is_whitespace)
+                .map(|(_, t)| t.trim())
+                .unwrap_or("");
+            match crate::config::delete_custom_theme(target) {
+                Ok(_) => app.popup = Some(format!("deleted custom theme '{target}'")),
                 Err(e) => app.popup = Some(e.to_string()),
             }
         }
+        ("theme", name) => match app.set_theme(name) {
+            Ok(_) => app.popup = Some(format!("theme → {name}")),
+            Err(e) => app.popup = Some(e.to_string()),
+        },
+
+        // ── community themes ──────────────────────────────────────────────────
+        ("themenet", _) => return CmdResult::NeedThemeBrowser,
 
         // ── streamer mode hotswap ─────────────────────────────────────────────
         ("streamer", _) => {
             app.cfg.settings.streamer_mode = !app.cfg.settings.streamer_mode;
-            let state = if app.cfg.settings.streamer_mode { "on" } else { "off" };
+            let state = if app.cfg.settings.streamer_mode {
+                "on"
+            } else {
+                "off"
+            };
+            if app.cfg.settings.streamer_mode { app.unlock_milestone("going_live"); }
             app.save();
             app.popup = Some(format!("streamer mode {state}"));
         }
 
         // ── device ────────────────────────────────────────────────────────────
         ("device" | "ssh", _) if !app.cfg.settings.ssh_allow => {
-            app.popup = Some("sshfs integration disabled (ssh_allow: false in config.json)".into());
+            app.popup = Some("sshfs integration disabled (ssh_allow: false in config.toml)".into());
         }
         ("device" | "ssh", "") => {
             if let Some(name) = &app.device_name {
@@ -140,21 +214,18 @@ pub fn handle(app: &mut App, raw: &str) -> CmdResult {
                 app.popup = Some("usage: :device <alias-or-user@host>  or  :device local".into());
             }
         }
-        ("device" | "ssh", target) => {
-            match app.switch_device(target) {
-                Ok(_)  => {}
-                Err(e) => app.popup = Some(e.to_string()),
-            }
-        }
-
+        ("device" | "ssh", target) => match app.switch_device(target) {
+            Ok(_) => {}
+            Err(e) => app.popup = Some(e.to_string()),
+        },
 
         // ── git integration ───────────────────────────────────────────────────
-        ("git", "sync") => {
-            match git::sync(app) {
-                Ok((copied, skipped)) => app.popup = Some(format!("synced! {copied} copied, {skipped} skipped")),
-                Err(e) => app.popup = Some(format!("sync failed: {e}")),
+        ("git", "sync") => match git::sync(app) {
+            Ok((copied, skipped)) => {
+                app.popup = Some(format!("synced! {copied} copied, {skipped} skipped"))
             }
-        }
+            Err(e) => app.popup = Some(format!("sync failed: {e}")),
+        },
         ("git", "commit") => {
             let git_dir = std::path::PathBuf::from(&app.cfg.git_dir);
             if !git::is_git_repo(&git_dir) {
@@ -165,7 +236,7 @@ pub fn handle(app: &mut App, raw: &str) -> CmdResult {
                 // sync first, then ui layer will prompt for commit message
                 match git::sync(app) {
                     Err(e) => app.popup = Some(format!("sync failed: {e}")),
-                    Ok(_)  => return CmdResult::NeedCommitMsg { then_push: false },
+                    Ok(_) => return CmdResult::NeedCommitMsg { then_push: false },
                 }
             }
         }
@@ -178,7 +249,7 @@ pub fn handle(app: &mut App, raw: &str) -> CmdResult {
             } else {
                 match git::sync(app) {
                     Err(e) => app.popup = Some(format!("sync failed: {e}")),
-                    Ok(_)  => return CmdResult::NeedCommitMsg { then_push: true },
+                    Ok(_) => return CmdResult::NeedCommitMsg { then_push: true },
                 }
             }
         }
@@ -203,35 +274,47 @@ pub fn handle(app: &mut App, raw: &str) -> CmdResult {
             app.popup = Some(format!("git dir reset to {}", app.cfg.git_dir));
         }
         ("git", _) => {
-            app.popup = Some("usage: :git sync | :git commit | :git push | :git dir <path> | :git reset".into());
+            app.popup = Some(
+                "usage: :git sync | :git commit | :git push | :git dir <path> | :git reset".into(),
+            );
         }
 
         // ── blacklist ─────────────────────────────────────────────────────────
-        ("bl", "") => {
-            match app.selected_item() {
-                Some(Item::File { path, group }) => {
-                    let (p, g) = (path.clone(), group.clone());
-                    if git::is_blacklisted(app, &p) {
-                        git::unblacklist_file(app, &p);
-                        app.popup = Some(format!("removed {} from git blacklist", Path::new(&p).file_name().unwrap_or_default().to_string_lossy()));
-                    } else {
-                        git::blacklist_file(app, &p);
-                        app.popup = Some(format!("blacklisted {}", Path::new(&p).file_name().unwrap_or_default().to_string_lossy()));
-                    }
+        ("bl", "") => match app.selected_item() {
+            Some(Item::File { path, group }) => {
+                let (p, g) = (path.clone(), group.clone());
+                if git::is_blacklisted(app, &p) {
+                    git::unblacklist_file(app, &p);
+                    app.popup = Some(format!(
+                        "removed {} from git blacklist",
+                        Path::new(&p)
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                    ));
+                } else {
+                    git::blacklist_file(app, &p);
+                    app.popup = Some(format!(
+                        "blacklisted {}",
+                        Path::new(&p)
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                    ));
                 }
-                Some(Item::Group(name)) => {
-                    let g = name.clone();
-                    if git::is_group_blacklisted(app, &g) {
-                        git::unblacklist_group(app, &g);
-                        app.popup = Some(format!("removed group {g} from git blacklist"));
-                    } else {
-                        git::blacklist_group(app, &g);
-                        app.popup = Some(format!("blacklisted group {g}"));
-                    }
-                }
-                None => app.popup = Some("select a file or group first".into()),
             }
-        }
+            Some(Item::Group(name)) => {
+                let g = name.clone();
+                if git::is_group_blacklisted(app, &g) {
+                    git::unblacklist_group(app, &g);
+                    app.popup = Some(format!("removed group {g} from git blacklist"));
+                } else {
+                    git::blacklist_group(app, &g);
+                    app.popup = Some(format!("blacklisted group {g}"));
+                }
+            }
+            None => app.popup = Some("select a file or group first".into()),
+        },
         ("bouncer", _) => return CmdResult::NeedBouncer,
 
         // ── help ──────────────────────────────────────────────────────────────
@@ -252,7 +335,10 @@ pub fn handle(app: &mut App, raw: &str) -> CmdResult {
 pub fn git_commit_and_maybe_push(app: &mut App, msg: &str, push: bool) {
     let git_dir = std::path::PathBuf::from(&app.cfg.git_dir);
     if !git::is_git_repo(&git_dir) {
-        app.popup = Some(format!("{} is not a git repo. run `git init` there first", app.cfg.git_dir));
+        app.popup = Some(format!(
+            "{} is not a git repo. run `git init` there first",
+            app.cfg.git_dir
+        ));
         return;
     }
     if !git::has_commits(&git_dir) {
@@ -260,21 +346,27 @@ pub fn git_commit_and_maybe_push(app: &mut App, msg: &str, push: bool) {
         return;
     }
     match git::git_add_all(&git_dir) {
-        Err(e) => { app.popup = Some(format!("git add failed: {e}")); return; }
-        Ok(_)  => {}
+        Err(e) => {
+            app.popup = Some(format!("git add failed: {e}"));
+            return;
+        }
+        Ok(_) => {}
     }
     if !git::git_has_staged(&git_dir) {
         app.popup = Some("nothing to commit. files are unchanged since last commit".into());
         return;
     }
     match git::git_commit(&git_dir, msg) {
-        Err(e) => { app.popup = Some(format!("git commit failed: {e}")); return; }
-        Ok(_)  => {}
+        Err(e) => {
+            app.popup = Some(format!("git commit failed: {e}"));
+            return;
+        }
+        Ok(_) => {}
     }
     if push {
         match git::git_push(&git_dir) {
             Err(e) => app.popup = Some(format!("committed, but push failed: {e}")),
-            Ok(_)  => app.popup = Some("committed and pushed!".into()),
+            Ok(_) => app.popup = Some("committed and pushed!".into()),
         }
     } else {
         app.popup = Some("committed!".into());

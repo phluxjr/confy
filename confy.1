@@ -5,6 +5,15 @@ confy \- a TUI config file manager for linux/unix systems
 
 .SH SYNOPSIS
 .B confy
+.br
+.B confy --web
+.RI [ --gui | --text | --mode gui|text ]
+.RI [ --ip address ]
+.RI [ --port port ]
+.RI [ --password password | --no-password ]
+.RI [ -ni ]
+.br
+.B confy [action]
 
 .SH DESCRIPTION
 .B confy
@@ -66,10 +75,81 @@ reopen the last edited file
 rollback the selected file to its last backup (see
 .BR ROLLBACK )
 .TP
+.B :diff
+compare the selected file with each retained backup; press
+.B r
+to restore the selected version
+.TP
+.B :hooks
+open
+.I ~/.config/confy/hooks.toml
+in the configured editor
+.TP
 .B :su
 open the selected file as root via
 .BR pkexec (1)
 (requires polkit)
+.TP
+.B :import [chezmoi|stow|yadm]
+review configs managed by a supported dotfile manager and choose which ones confy should track
+.TP
+.B confy import [chezmoi|stow|yadm]
+open the same import review directly from the shell
+
+.SS HOOKS
+.B ~/.config/confy/hooks.toml
+contains a
+.B [hooks]
+table with command arrays named
+.BR opened ,
+.BR changed ,
+.BR rolled_back ,
+.BR restored ,
+.BR tracked ,
+and
+.BR untracked .
+commands run asynchronously through
+.BR sh (1)
+and receive
+.B CONFY_EVENT
+and
+.B CONFY_FILE
+environment variables.
+
+.SS COMMAND-LINE SHORTCUTS
+.TP
+.B confy l / confy last
+open the last edited config before entering the tui
+.TP
+.B confy s:<text>
+open the tui with search prefilled
+.TP
+.B confy o:<path> [g:<group>]
+track and open a config file
+.TP
+.B confy d:<host>
+switch to a remote device before opening the tui
+.TP
+.B confy stats / confy milestones
+open the selected stats view directly
+.TP
+.B confy hooks
+edit the hooks configuration
+.TP
+.B confy st:share
+print copyable markdown stats and exit
+.TP
+.B confy st:img[:transparent], st:banner[:transparent], st:post[:transparent]
+write a themed svg stats image in landscape, banner, or portrait format. the transparent form omits the canvas background
+.TP
+.B confy completions <bash|elvish|fish|powershell|zsh>
+print a shell completion script
+.TP
+.B confy h / help / man
+display usage information and exit
+.TP
+.B confy v / ver / version / e / edition
+display version information and exit
 
 .SS GROUP MANAGEMENT
 .TP
@@ -99,7 +179,8 @@ toggle ascending/descending sort order
 .SS APPEARANCE
 .TP
 .B :theme <name>
-switch to a built-in color theme. available themes:
+switch to a color theme. accepts any built-in theme or a custom theme
+you've created. available built-in themes:
 .BR catppuccin ,
 .BR dracula ,
 .BR gruvbox ,
@@ -109,7 +190,20 @@ switch to a built-in color theme. available themes:
 applies instantly and persists across restarts.
 .TP
 .B :theme
-list available themes
+list available built-in and custom themes
+.TP
+.B :theme list
+list built-in and custom themes separately
+.TP
+.B :theme new
+open the guided theme creator. walks you through naming the theme,
+choosing a base theme or a blank template, then editing each color
+component (background, foreground, highlight, group, border).
+custom themes are saved as TOML files under
+.IR ~/.config/confy/themes/ .
+.TP
+.B :theme delete <name>
+delete a custom theme
 .TP
 .B :streamer
 toggle streamer mode. hides full paths and timestamps, showing only filenames.
@@ -202,20 +296,35 @@ show the first-startup tutorial again
 quit
 
 .SH ROLLBACK
-confy saves a compressed backup of any file to
-.I /tmp/<filename>.confbak
-before opening it for editing. if you break something, select the file and run
+confy keeps the latest three gzip-compressed backups per tracked file under
+.IR ~/.local/share/confy/backups/ .
+it saves a backup before editing. if you break something, select the file and run
 .B :rb
 to restore it.
 
 rollback can be disabled in
-.IR config.json :
+.IR config.toml :
 .PP
 .nf
-"settings": {
-  "rollback": false
-}
+[settings]
+rollback = false
 .fi
+
+.SH WEB EDITOR
+.B confy --web
+interactively asks for a mode, ip address, port, and optional password before starting the browser editor. launch flags override their prompts; use
+.B -ni
+to skip the prompts and use defaults. the default mode is gui, on
+.IR 127.0.0.1:3000 .
+the gui provides the grouped file browser and command field; text mode provides an in-browser terminal with keybinds and a vim-style editor in jetbrains mono. both use the active theme. set
+.B CONFY_WEB_PASSWORD
+or pass
+.B --password
+to require basic authentication. use
+.B --ip
+and
+.B --port
+to choose another address. the built-in server uses http; use a tls reverse proxy when exposing it to a network. only tracked files are available.
 
 .SH REMOTE PROFILES
 .B :device <host>
@@ -223,7 +332,7 @@ mounts the remote machine's entire root filesystem over sshfs, then switches con
 .I /etc/pf.conf
 resolve correctly through the mount.
 
-if the remote is running an older version of confy (pre-config.json, still on tracked.json), confy will refuse to connect and tell you to update confy on that host first.
+if the remote is running an older version of confy (pre-config.toml, still on tracked.json), confy will refuse to connect and tell you to update confy on that host first.
 
 .B :su
 works through a mounted device: sshfs presents remote files under your own uid, so
@@ -240,15 +349,21 @@ confy will tell you if this is missing.
 
 .SH CONFIGURATION
 confy stores its state in
-.IR ~/.config/confy/config.json .
-if upgrading from an older version with
-.IR tracked.json ,
-confy migrates it automatically on first run.
+.IR ~/.config/confy/config.toml .
+if upgrading from an older version that used
+.IR config.json ,
+confy keeps the old file, copies it to
+.I config.json.bak
+and migrates the contents into
+.I config.toml
+on first run. an even older
+.I tracked.json
+is migrated automatically too.
 
 .SS SETTINGS
 all settings live under the
-.I settings
-key in config.json:
+.I [settings]
+table in config.toml:
 
 .TP
 .B rollback
@@ -318,21 +433,38 @@ boolean. reserved for future use. default: false
 
 .SH FILES
 .TP
-.I ~/.config/confy/config.json
+.I ~/.config/confy/config.toml
 main configuration and tracked file list
+.TP
+.I ~/.config/confy/config.json
+legacy config from older versions. kept for reference after migration.
+.TP
+.I ~/.config/confy/config.json.bak
+backup of the legacy config, created during migration
+.TP
+.I ~/.config/confy/themes/
+custom theme definitions, one
+.I <name>.toml
+file per theme. each file uses the keys
+.BR bg ,
+.BR fg ,
+.BR highlight ,
+.BR group ,
+and
+.BR border .
 .TP
 .I ~/.cache/confy/mounts/
 sshfs mountpoints for remote device profiles
 .TP
-.I /tmp/<filename>.confbak
-rollback backups (gzip compressed, overwritten on each open)
+.I ~/.local/share/confy/backups/
+per-file rollback backups (gzip compressed, latest three retained)
 
 .SH ENVIRONMENT
 .TP
 .B EDITOR
 editor to open files with. overridden by the
 .I editor
-setting in config.json. falls back to
+setting in config.toml. falls back to
 .BR nano (1)
 if neither is set.
 

@@ -9,7 +9,7 @@ pub const STEPS: &[TutorialStep] = &[
         lines: &[
             "confy tracks your config files in one place.",
             "use j/k (or arrow keys) to move up and down.",
-            "press enter to open a file in your $EDITOR.",
+            "press enter to open a file in your editor.",
             "press p to toggle a live preview pane.",
             "",
             "press any key for the next tip...",
@@ -39,6 +39,7 @@ pub const STEPS: &[TutorialStep] = &[
             ":sort name|date|size  →  sort files",
             ":reverse     →  flip sort order",
             ":theme <name>  →  switch color theme",
+            ":theme new  →  make your own theme (base or blank)",
             ":device <host>  →  browse a remote host's configs",
             ":device local  →  back to local configs",
             ":su  →  edit selected file as root (needs polkit)",
@@ -54,9 +55,9 @@ pub const STEPS: &[TutorialStep] = &[
             "press enter to confirm, esc to clear.",
             "",
             "rollback  (:rb)",
-            "confy saves a backup to /tmp whenever you",
-            "open a file for editing. :rb restores it.",
-            "set  \"rollback\": false  in config.json to disable.",
+            "confy saves up to three gzipped backups per file",
+            "under ~/.local/share/confy/backups. :rb restores latest.",
+            "set  rollback = false  in config.toml to disable.",
             "",
             "press any key for the next tip...",
         ],
@@ -64,7 +65,7 @@ pub const STEPS: &[TutorialStep] = &[
     TutorialStep {
         title: "that's it!",
         lines: &[
-            "tip: set your $EDITOR env var to your preferred",
+            "tip: set your editor env var to your preferred",
             "editor (vim, nvim, nano, micro, etc.).",
             "",
             "for full docs run:  man confy",

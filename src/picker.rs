@@ -54,7 +54,7 @@ impl Picker {
         Some(path) == self.cwd.parent().map(|p| p as &Path)
     }
 
-    /// run the picker, returning the chosen path or None if cancelled
+    /// run the picker, returning the chosen path or none if cancelled
     pub fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<Option<PathBuf>> {
         loop {
             terminal.draw(|f| self.render(f))?;

@@ -21,10 +21,11 @@
 * **remote profiles** - `:device <host>` mounts and browses another machine's tracked configs over sshfs
 * **live preview pane** - toggle a side-by-side file preview with `p`
 * **built-in themes** - catppuccin, dracula, gruvbox, nord, tokyo-night, one-dark, switch with `:theme`
+* **custom themes** - create your own with the `:theme new` guided wizard, or drop a TOML file in `~/.config/confy/themes/`
 * **remembers last file** - quick access to recently edited configs
 * **built-in file picker** - navigate with vim keys, no external dependencies
 * **rollback** - automatic compressed backups before every edit, restore with `:rb`
-* **custom colors** - set colors via config.json, supports hex and named colors
+* **custom colors** - set colors via config.toml, supports hex and named colors
 * **vim-style keybinds** - j/k navigation, command mode
 * **git integration** - sync your dotfiles to a git repo with `:git`, commit and push without leaving confy
 * **streamer mode** - hide paths and timestamps with `:streamer` so nothing leaks on stream
@@ -86,12 +87,53 @@ just run `confy` in your terminal.
 
 ### commands
 
+* `:stats` - open the full-screen stats dashboard with themed metric cards, edit-share bars, a ranked configs-most-opened leaderboard, editing streak and most active day, milestones, a theme palette, sortable config activity (`s` toggles sorting), and the confy config directory's creation date
+* `:diff` - compare the selected config with each retained backup; press `r` to restore the selected version
+* `:hooks` - open `~/.config/confy/hooks.toml` in your configured editor
+
+stats milestones include `you're in`, `oops`, `collection`, `hoarder`, `storage room`, `configs: managed`, `dotfile demon`, `editorial`, `welcome to confy!`, `new clothes!`, `self-sewed`, `thrift shop`, `going live`, `haunting a remote machine`, `with great power..`, `happy birthday to me!`, and `one of us`. press `m` in the stats dashboard to view the full milestone wall.
+* `:import [chezmoi|stow|yadm]` - find configs managed by one of these tools, review the list, and choose what to track
+
+you can start the same import review without opening the main interface with `confy import [chezmoi|stow|yadm]`. candidates are preselected unless already tracked; use `space` to toggle, `a` to select all, `n` to clear, and `enter` to save the selected configs.
+
+#### command-line shortcuts
+
+* `confy l` / `confy last` - open the last edited config before entering the tui
+* `confy s:<text>` - open the tui with search prefilled
+* `confy o:<path> [g:<group>]` - track and open a file
+* `confy d:<host>` - switch to a remote device before opening the tui
+* `confy stats` / `confy milestones` - open the matching dashboard directly
+* `confy hooks` - edit the hooks configuration
+* `confy st:share` - print copyable markdown stats
+* `confy st:img`, `confy st:banner`, `confy st:post` - write a themed svg stats image; add `:transparent` for a transparent canvas or `to:<path>` to choose the output path
+* `confy completions <bash|elvish|fish|powershell|zsh>` - generate shell completions
+* `confy h`, `confy help`, or `confy man` - show usage; `confy v`, `ver`, `version`, `e`, or `edition` - show version information
+
+completion scripts come from clap's shell generators; install the generated script using your shell's normal completion directory.
+
+#### hooks
+
+`~/.config/confy/hooks.toml` runs commands asynchronously through `sh -c` after confy events. each command receives `CONFY_EVENT` and `CONFY_FILE` environment variables. supported events are `opened`, `changed`, `rolled_back`, `restored`, `tracked`, and `untracked`. restoring from `:diff` triggers both `rolled_back` and `restored`.
+
+```toml
+[hooks]
+opened = []
+changed = ["notify-send 'confy' \"$CONFY_FILE changed\""]
+rolled_back = []
+restored = []
+tracked = []
+untracked = []
+```
+
+edit the file with `:hooks` in the tui or `confy hooks` from the shell. hook commands run as your user and in the background.
+
 #### file management
 * `:ac` - add config to ungrouped
 * `:ac <group>` - add config to specific group
 * `:rm` - remove selected file from tracking (does not delete the file)
 * `:l` - open last edited file
 * `:rb` - rollback selected file to last backup
+* `:diff` - browse backup diffs and restore a selected version
 * `:su` - open selected file with root via pkexec (needs polkit)
 
 #### remote profiles
@@ -110,8 +152,11 @@ just run `confy` in your terminal.
 * `:bouncer` - open a menu to bulk-manage the git blacklist (space to toggle, Z to confirm)
 
 #### appearance
-* `:theme <name>` - switch color theme (`catppuccin`, `dracula`, `gruvbox`, `nord`, `tokyo-night`, `one-dark`)
+* `:theme <name>` - switch color theme (`catppuccin`, `dracula`, `gruvbox`, `nord`, `tokyo-night`, `one-dark`, or any custom theme)
 * `:theme` (no args) - list available themes
+* `:theme list` - list built-in and custom themes separately
+* `:theme new` - guided wizard to create a custom theme (base or blank)
+* `:theme delete <name>` - delete a custom theme
 * `:streamer` - toggle streamer mode (hides paths and timestamps)
 
 #### group management
@@ -134,14 +179,25 @@ just run `confy` in your terminal.
 
 ### rollback
 
-confy automatically saves a compressed backup of any file to `/tmp/<filename>.confbak` before you open it for editing. if you make a mess of your config, select the file and run `:rb` to restore it.
+confy saves up to three gzipped backups per tracked file in `~/.local/share/confy/backups` before editing. backups are keyed by the full path, so files with the same name in different directories do not collide. `:rb` restores the latest backup.
 
-rollback can be disabled in config.json:
-```json
-"settings": {
-  "rollback": false
-}
+rollback can be disabled in config.toml:
+```toml
+[settings]
+rollback = false
 ```
+
+### web editor
+
+start the browser editor with `confy --web`. the interactive setup asks for gui or text mode, ip address, port, and an optional password. the gui provides confy's grouped file browser and command interface; text mode opens a terminal-style browser with j/k navigation and vim-style editing (`i` to insert, `esc` to return to normal mode, `:wq` to save). both use the active confy theme and save a backup before writing.
+
+launch flags override their corresponding prompts. use `-ni` to skip setup prompts and use defaults: gui mode, `127.0.0.1`, port `3000`, and no password.
+
+```sh
+CONFY_WEB_PASSWORD='choose-a-password' confy --web --ip 0.0.0.0 --port 3000 --gui -ni
+```
+
+other launch flags are `--text`, `--mode gui|text`, `--password password`, `--no-password`, `--ip address`, and `--port port`. when exposing the server beyond localhost, use a tls reverse proxy; the built-in server uses http and does not encrypt traffic. only tracked files are listed.
 
 ### git integration
 
@@ -151,13 +207,13 @@ rollback can be disabled in config.json:
 
 use `:bl` on any file or group to exclude it from syncing (useful for `.env` files or anything sensitive). `:bouncer` gives you a full menu to manage the blacklist in bulk.
 
-git settings in config.json:
-```json
-"git_dir": "~/dotfiles-git",
-"git_blacklist": ["/home/user/.config/some/secret.env"],
-"git_blacklist_groups": ["personal"],
-"git_auto_push": false,
-"git_auto_commit": false
+git settings in config.toml:
+```toml
+git_dir = "~/dotfiles-git"
+git_blacklist = ["/home/user/.config/some/secret.env"]
+git_blacklist_groups = ["personal"]
+git_auto_push = false
+git_auto_commit = false
 ```
 
 ### themes
@@ -166,16 +222,45 @@ confy ships with six built-in themes: `catppuccin` (default), `dracula`, `gruvbo
 ```
 :theme dracula
 ```
-applies instantly and persists to config.json, no restart needed. run `:theme` with no arguments to list all available themes.
+applies instantly and persists to config.toml, no restart needed. run `:theme` with no arguments to list all available themes.
+
+#### custom themes
+
+you can create your own themes. run:
+```
+:theme new
+```
+this opens a guided wizard that:
+
+1. asks you to name your theme
+2. lets you start from a **base theme** or a **blank template**
+3. walks you through editing each color (`bg`, `fg`, `highlight`, `group`, `border`)
+
+press `s` on the color screen to save and apply. custom themes are written as TOML files in `~/.config/confy/themes/<name>.toml`, so you can also edit them by hand:
+
+```toml
+bg = "default"
+fg = "default"
+highlight = "#cba6f7"
+group = "#89b4fa"
+border = "default"
+```
+
+colors accept named colors (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `default`) or hex values like `#89b4fa`. missing keys fall back to defaults, so a minimal file works fine.
+
+other theme commands:
+```
+:theme list            # list built-in and custom themes
+:theme delete <name>   # remove a custom theme
+```
 
 ### streamer mode
 
-`:streamer` toggles streamer mode, which hides full file paths and timestamps. only filenames are shown. useful if you're on stream and don't want your username or directory structure visible. persists to config.json, or set it directly:
-```json
-"settings": {
-  "streamer_mode": true,
-  "streamer_hide_git": true
-}
+`:streamer` toggles streamer mode, which hides full file paths and timestamps. only filenames are shown. useful if you're on stream and don't want your username or directory structure visible. persists to config.toml, or set it directly:
+```toml
+[settings]
+streamer_mode = true
+streamer_hide_git = true
 ```
 
 ### preview pane
@@ -192,7 +277,7 @@ press `p` to toggle a live preview pane alongside your file list. it shows the f
 :device local             # switch back to your own configs
 ```
 
-requires [`sshfs`](https://github.com/libfuse/sshfs) installed locally. if the remote host is running an older confy that predates `config.json` (i.e. still on `tracked.json`), confy will refuse to connect and ask you to update confy there first.
+requires [`sshfs`](https://github.com/libfuse/sshfs) installed locally. if the remote host is running an older confy that predates `config.toml` (i.e. still on `tracked.json`), confy will refuse to connect and ask you to update confy there first.
 
 while on a device, the header shows `[remote: <host>]` so it's always clear you're not looking at your local files. edits, previews, sorting, and rollback all work through the mount.
 
@@ -217,39 +302,45 @@ groups are collapsible, press `space` or `enter` on a group header to toggle.
 
 ## configuration file
 
-confy stores everything in `~/.config/confy/config.json`. upgrading from an older version with `tracked.json`? confy migrates it automatically on first run.
+confy stores everything in `~/.config/confy/config.toml`.
 
-full example config.json:
-```json
-{
-  "groups": {
-    "hyprland": ["/home/user/.config/hypr/hyprland.conf"],
-    "nvim": ["/home/user/.config/nvim/init.lua"],
-    "ungrouped": []
-  },
-  "settings": {
-    "rollback": true,
-    "theme": "catppuccin",
-    "colors": {
-      "bg": "default",
-      "fg": "default",
-      "highlight": "#cba6f7",
-      "group": "#89b4fa"
-    },
-    "background_enable": false,
-    "background_color": "#1e1e2e",
-    "streamer_mode": false,
-    "streamer_hide_git": true,
-    "editor": null,
-    "ssh_allow": true
-  },
-  "git_dir": "/home/user/dotfiles-git",
-  "git_blacklist": [],
-  "git_blacklist_groups": [],
-  "git_auto_push": false,
-  "git_auto_commit": false,
-  "preview_enabled": false
-}
+upgrading from an older version that used `config.json`? confy keeps your old file, copies it to `config.json.bak`, and migrates the contents into `config.toml` on first run. upgrading from `tracked.json`? confy migrates that automatically too.
+
+full example config.toml:
+```toml
+last_opened = "/home/user/.config/hypr/hyprland.conf"
+collapsed_groups = []
+sort_mode = "name"
+sort_order = "asc"
+config_dir = "/home/user/.config"
+preview_enabled = false
+git_dir = "/home/user/dotfiles-git"
+git_blacklist = []
+git_blacklist_groups = []
+git_auto_push = false
+git_auto_commit = false
+
+[groups]
+hyprland = ["/home/user/.config/hypr/hyprland.conf"]
+nvim = ["/home/user/.config/nvim/init.lua"]
+ungrouped = []
+
+[settings]
+rollback = true
+first_startup = false
+theme = "catppuccin"
+background_enable = false
+background_color = "#1e1e2e"
+streamer_mode = false
+streamer_hide_git = true
+ssh_allow = true
+
+[settings.colors]
+bg = "default"
+fg = "default"
+highlight = "#cba6f7"
+group = "#89b4fa"
+border = "default"
 ```
 
 ### settings reference
@@ -315,7 +406,7 @@ p
 
 ## tips
 
-* set `export EDITOR=nvim` in your shell rc, or use the `editor` setting in config.json
+* set `export EDITOR=nvim` in your shell rc, or use the `editor` setting in config.toml
 * use groups to organize by application (hyprland/, nvim/, kitty/)
 * use `:sort date` to quickly find recently edited configs
 * use `:bl` on `.env` files or anything sensitive before running `:git sync`
@@ -330,10 +421,14 @@ p
 </p>
 
 <p align="center">
+  <strong>confy supports all identities <3</strong>
+</p>
+
+<p align="center">
   prs welcome! if you have ideas for improvements, open an issue or submit a pr.
 </p>
 
-<p align="cemter">
+<p align="center">
   if you like confy, consider leaving a star or contributing to the repo!
 </p>
 

@@ -111,4 +111,22 @@ the rewrite increased the line count but the codebase is now split into logical 
 
 ---
 
+## v4.0.0 - the flex update
+
+**november 10th, 2026**
+
+confy got a lot more personal in this one. there's now a stats dashboard to show off your config habits, complete with activity charts, streaks, a most-opened leaderboard, and milestones for all the little confy achievements.
+
+- **stats and milestones** - browse your editing history, see when you started using confy, and collect milestone titles for edits, rollbacks, themes, and more
+- **shareable stats** - print copyable stats or generate themed svg images in a few different layouts, with transparent backgrounds available
+- **import reviews** - find configs managed by chezmoi, stow, or yadm, review the list, and choose what to track
+- **cli shortcuts and completions** - jump straight to a file, search, stats, milestones, or a remote device from the command line; generate shell completions with clap
+- **backup diff browser** - compare a tracked config against its retained backups and restore the version you choose
+- **event hooks** - configure asynchronous commands in `~/.config/confy/hooks.toml` for file opens, edits, rollbacks, restores, and tracking changes
+- **help that actually helps** - short command aliases such as `confy h` now print usage and exit instead of opening the tui
+
+the goal was simple: make confy more useful day to day, and give you something nice to brag about when it isn't.
+
+---
+
 *and that's the story so far. not bad for a tool that started as a 199 line script because hunting through `~/.config` was annoying.*
