@@ -1,106 +1,293 @@
-.TH CONFY 1 "2026-08-10" "3.1.0" "confy manual"
-
-.SH NAME
-confy \- a TUI config file manager for linux/unix systems
-
-.SH SYNOPSIS
+.TH confy 1 "november 2026" "confy" "user commands"
+.SH name
+confy \- a config manager for linux/unix systems
+.SH synopsis
 .B confy
+.RI [ command ]
 .br
 .B confy --web
-.RI [ --gui | --text | --mode gui|text ]
-.RI [ --ip address ]
-.RI [ --port port ]
-.RI [ --password password | --no-password ]
-.RI [ -ni ]
-.br
-.B confy [action]
-
-.SH DESCRIPTION
+.RI [ options ]
+.SH description
 .B confy
-tracks your config files in one place so you don't have to remember where they all live.
-add files to confy, organise them into groups, and open them in your
-.B $EDITOR
-with a single keypress. no more hunting through ~/.config.
-
-written in rust using ratatui. zero required dependencies beyond the binary itself.
-
-.SH NAVIGATION
+is a terminal user interface for tracking, grouping, previewing, editing, and rolling back configuration files. it can also manage dotfiles with git, browse remote configs over sshfs, import configs from common dotfile managers, and show activity stats and milestones.
+.PP
+running
+.B confy
+without a command opens the main interface.
+.SH navigation
 .TP
-.B j / k
-or arrow keys \- move up and down the list
+.B j, k
+move down or up. arrow keys work too.
 .TP
 .B enter
-open the selected file in
-.BR $EDITOR ,
-or toggle a group open/closed
+open the selected file in the configured editor, or toggle the selected group.
 .TP
 .B space
-toggle the selected group open/closed
+expand or collapse a group.
 .TP
 .B p
-toggle the live preview pane
+toggle the live preview pane.
 .TP
 .B /
-enter search mode \- type to filter files and groups in real-time
+search tracked files and groups.
 .TP
 .B :
-enter command mode
+enter command mode.
 .TP
 .B q
-quit
-
-.SH COMMANDS
-Commands are entered by pressing
+quit.
+.SH tui commands
+enter commands by pressing
 .B :
-followed by the command name and optional arguments, then
-.BR enter .
-.B esc
-cancels.
-
-.SS FILE MANAGEMENT
+and typing the command. arguments are separated from the command name by spaces.
+.SS files and backups
 .TP
 .B :ac
-add a config file to the ungrouped group (opens the built-in file picker)
+add a config file to the ungrouped group.
 .TP
-.B :ac <group>
-add a config file directly to a named group
+.BI :ac " group"
+add a config file to a named group.
 .TP
 .B :rm
-stop tracking the selected file (does not delete the file from disk)
+remove the selected file from confy's tracking list without deleting it from disk.
 .TP
 .B :l
-reopen the last edited file
+open the last edited file.
 .TP
 .B :rb
-rollback the selected file to its last backup (see
-.BR ROLLBACK )
+restore the selected file from its latest backup.
 .TP
 .B :diff
-compare the selected file with each retained backup; press
+compare the selected file with its retained backups. use
+.B j/k
+to choose a backup,
+.B pgup/pgdn
+to scroll, and
 .B r
-to restore the selected version
-.TP
-.B :hooks
-open
-.I ~/.config/confy/hooks.toml
-in the configured editor
+to restore the selected version. press
+.B q
+or
+.B esc
+to close.
 .TP
 .B :su
-open the selected file as root via
-.BR pkexec (1)
-(requires polkit)
+open the selected file with root privileges through
+.BR pkexec (1).
+.SS groups
+.TP
+.BI :ag " group"
+create a group.
+.TP
+.BI :mg " group"
+move the selected file to a group.
+.TP
+.BI :rg " group"
+remove a group and move its files to ungrouped.
+.SS search and sorting
+.TP
+.B :sort name|date|size
+sort files by name, modification date, or file size.
+.TP
+.B :reverse
+toggle ascending or descending sort order.
+.TP
+.B /
+search files and groups as you type.
+.SS themes and appearance
+.TP
+.BI :theme " name"
+switch to a built-in or custom theme.
+.TP
+.B :theme
+list available themes.
+.TP
+.B :theme list
+list built-in and custom themes separately.
+.TP
+.B :theme new
+create a custom theme with the guided wizard.
+.TP
+.BI :theme delete " name"
+delete a custom theme.
+.TP
+.B :themenet
+browse and download community themes.
+.TP
+.B :streamer
+toggle streamer mode, which hides paths and timestamps.
+.SS stats and imports
+.TP
+.B :stats
+open the stats dashboard. press
+.B s
+to change activity sorting and
+.B m
+to open the milestone wall.
 .TP
 .B :import [chezmoi|stow|yadm]
-review configs managed by a supported dotfile manager and choose which ones confy should track
+find configs managed by chezmoi, stow, or yadm and review which ones to track. in the review, use
+.B space
+to toggle entries,
+.B a
+to select all,
+.B n
+to clear the selection, and
+.B enter
+to save.
+.SS remote devices
+.TP
+.BI :device " host"
+mount and browse a remote profile over sshfs. the host can be an ssh config alias or a user@host target.
+.TP
+.B :device local
+return to local configs.
+.TP
+.B :device
+show the active device or usage.
+.TP
+.B :ssh
+alias for
+.BR :device .
+.SS git integration
+.TP
+.B :git sync
+copy tracked configs into the configured dotfiles repository, organized by group.
+.TP
+.B :git commit
+sync and commit the changes after prompting for a commit message.
+.TP
+.B :git push
+sync, commit, and push. the repository must already have an initial commit.
+.TP
+.BI :git dir " path"
+set the dotfiles repository path. with no path, open the path picker.
+.TP
+.B :git reset
+reset the repository path to ~/dotfiles-git.
+.TP
+.B :bl
+toggle the selected file or group in the git sync blacklist.
+.TP
+.B :bouncer
+open the bulk blacklist editor. use space to toggle entries and
+.B z
+to confirm.
+.SS configuration
+.TP
+.B :cd
+open the config directory picker.
+.TP
+.BI :cd " path"
+set the config directory.
+.TP
+.B :cd reset
+reset the config directory to ~/.config.
+.TP
+.B :q
+quit.
+.SH command-line shortcuts
+these compact actions run after the base
+.B confy
+command.
+.TP
+.B confy l | confy last
+open the last edited file in the tui.
+.TP
+.BI "confy s:" text
+open the tui with the search panel populated with
+.IR text .
+.TP
+.BI "confy o:" path
+track the file in ungrouped, open it, and enter the tui.
+.TP
+.BI "confy o:" path " g:" group
+track the file in
+.IR group ,
+open it, and enter the tui. quote paths or group names containing spaces as needed by the shell.
+.TP
+.BI "confy d:" ssh-target
+switch to the remote device and enter the tui.
+.TP
+.B confy stats
+open the stats dashboard directly.
+.TP
+.B confy milestones
+open the milestone wall directly.
 .TP
 .B confy import [chezmoi|stow|yadm]
-open the same import review directly from the shell
-
-.SS HOOKS
-.B ~/.config/confy/hooks.toml
-contains a
+open the import review directly.
+.TP
+.B confy hooks
+open the hooks configuration in the configured editor.
+.TP
+.B confy st:share
+print copyable markdown stats and exit.
+.TP
+.B confy st:img[:transparent]
+write a themed svg stats image.
+.TP
+.B confy st:banner[:transparent]
+write a wide themed svg stats image.
+.TP
+.B confy st:post[:transparent]
+write a portrait themed svg stats image.
+.TP
+.BI "to:" path
+append this argument to an image command to choose its output path. by default, confy writes confy-stats-img.svg, confy-stats-banner.svg, or confy-stats-post.svg in the current directory. transparent images add -transparent before the .svg extension.
+.TP
+.B confy completions bash|elvish|fish|powershell|zsh
+print a shell completion script to standard output.
+.TP
+.B confy h | help | man
+display usage information and exit.
+.TP
+.B confy v | ver | version | e | edition
+display version information and exit.
+.TP
+.B confy --help, confy --version
+display help or version information and exit.
+.SH web editor
+.B confy --web
+starts the browser editor. without launch flags, confy interactively asks for gui or text mode, bind address, port, and optional password.
+.PP
+the gui mode provides a browser-based grouped file interface. text mode provides a terminal-style browser with vim-like editing. both modes edit tracked files and create backups before writing.
+.TP
+.BI --ip " address"
+set the bind address. the alias
+.B --bind
+is also accepted.
+.TP
+.BI --port " port"
+set the listening port.
+.TP
+.B --gui
+select gui mode.
+.TP
+.B --text
+select text mode.
+.TP
+.BI --mode " gui|text"
+select a mode.
+.TP
+.BI --password " password"
+set a web password.
+.TP
+.B --no-password
+disable the web password.
+.TP
+.B -ni, --no-interactive
+skip setup prompts and use defaults: gui mode, 127.0.0.1, port 3000, no password.
+.TP
+.B --help
+show web editor usage.
+.PP
+the built-in web server uses http. use a tls reverse proxy when serving it beyond localhost.
+.SH hooks
+hooks are configured separately in
+.IR ~/.config/confy/hooks.toml .
+the file contains a
 .B [hooks]
-table with command arrays named
+table with arrays of shell commands for these events:
 .BR opened ,
 .BR changed ,
 .BR rolled_back ,
@@ -110,405 +297,58 @@ and
 .BR untracked .
 commands run asynchronously through
 .BR sh (1)
-and receive
+as the current user. each receives the
 .B CONFY_EVENT
 and
 .B CONFY_FILE
-environment variables.
-
-.SS COMMAND-LINE SHORTCUTS
-.TP
-.B confy l / confy last
-open the last edited config before entering the tui
-.TP
-.B confy s:<text>
-open the tui with search prefilled
-.TP
-.B confy o:<path> [g:<group>]
-track and open a config file
-.TP
-.B confy d:<host>
-switch to a remote device before opening the tui
-.TP
-.B confy stats / confy milestones
-open the selected stats view directly
-.TP
-.B confy hooks
-edit the hooks configuration
-.TP
-.B confy st:share
-print copyable markdown stats and exit
-.TP
-.B confy st:img[:transparent], st:banner[:transparent], st:post[:transparent]
-write a themed svg stats image in landscape, banner, or portrait format. the transparent form omits the canvas background
-.TP
-.B confy completions <bash|elvish|fish|powershell|zsh>
-print a shell completion script
-.TP
-.B confy h / help / man
-display usage information and exit
-.TP
-.B confy v / ver / version / e / edition
-display version information and exit
-
-.SS GROUP MANAGEMENT
-.TP
-.B :ag <group>
-add a new group
-.TP
-.B :rg <group>
-remove a group (files move to ungrouped)
-.TP
-.B :mg <group>
-move the selected file to a group
-
-.SS SORTING & SEARCH
-.TP
-.B :sort name
-sort files alphabetically (default)
-.TP
-.B :sort date
-sort by date last modified
-.TP
-.B :sort size
-sort by file size
-.TP
-.B :reverse
-toggle ascending/descending sort order
-
-.SS APPEARANCE
-.TP
-.B :theme <name>
-switch to a color theme. accepts any built-in theme or a custom theme
-you've created. available built-in themes:
-.BR catppuccin ,
-.BR dracula ,
-.BR gruvbox ,
-.BR nord ,
-.BR tokyo-night ,
-.BR one-dark .
-applies instantly and persists across restarts.
-.TP
-.B :theme
-list available built-in and custom themes
-.TP
-.B :theme list
-list built-in and custom themes separately
-.TP
-.B :theme new
-open the guided theme creator. walks you through naming the theme,
-choosing a base theme or a blank template, then editing each color
-component (background, foreground, highlight, group, border).
-custom themes are saved as TOML files under
-.IR ~/.config/confy/themes/ .
-.TP
-.B :theme delete <name>
-delete a custom theme
-.TP
-.B :streamer
-toggle streamer mode. hides full paths and timestamps, showing only filenames.
-useful if you're recording your screen and don't want your username visible.
-
-.SS CONFIGURATION DIRECTORY
-.TP
-.B :cd
-change the config search directory used by the file picker (opens picker in dir-select mode)
-.TP
-.B :cd <path>
-set the config search directory directly
-.TP
-.B :cd reset
-reset the config search directory to
-.I ~/.config
-
-.SS REMOTE PROFILES
-.TP
-.B :device <host>
-mount a remote machine's filesystem over sshfs and switch confy's view to that host's tracked configs.
-accepts an
-.I ~/.ssh/config
-alias or a literal
-.IR user@host .
-requires
-.BR sshfs (1)
-installed locally.
-.TP
-.B :device local
-unmount the remote and return to your local configs
-.TP
-.B :device
-show the currently active device, if any
-.TP
-.B :ssh <host>
-alias for
-.B :device <host>
-
-.SS GIT INTEGRATION
-confy can manage a dotfiles git repository at
-.I ~/dotfiles-git
-(configurable). files are organised by group name; ungrouped files with a shared filename prefix are auto-foldered.
-.TP
-.B :git sync
-copy all non-blacklisted tracked files into the dotfiles directory. no git operations performed.
-.TP
-.B :git commit
-sync files, then prompt for a commit message and commit.
-requires at least one prior commit to exist in the repo.
-.TP
-.B :git push
-sync, commit (prompts for message), then push to the configured remote.
-.TP
-.B :git dir
-change the dotfiles directory (opens picker)
-.TP
-.B :git dir <path>
-set the dotfiles directory directly
-.TP
-.B :git reset
-reset the dotfiles directory to
-.I ~/dotfiles-git
-
-.SS GIT BLACKLIST
-.TP
-.B :bl
-toggle the selected file or group on/off the git blacklist.
-blacklisted items are skipped by
-.BR ":git sync" .
-useful for .env files and other sensitive configs you don't want in a public repo.
-.TP
-.B :bouncer
-open the bulk blacklist menu.
-.B space
-toggles an item,
-.B Z
-confirms,
-.B esc
-cancels.
-
-.SS MISC
-.TP
-.B :h
-.TQ
-.B :help
-show the first-startup tutorial again
-.TP
-.B :q
-quit
-
-.SH ROLLBACK
-confy keeps the latest three gzip-compressed backups per tracked file under
-.IR ~/.local/share/confy/backups/ .
-it saves a backup before editing. if you break something, select the file and run
-.B :rb
-to restore it.
-
-rollback can be disabled in
-.IR config.toml :
-.PP
-.nf
-[settings]
-rollback = false
-.fi
-
-.SH WEB EDITOR
-.B confy --web
-interactively asks for a mode, ip address, port, and optional password before starting the browser editor. launch flags override their prompts; use
-.B -ni
-to skip the prompts and use defaults. the default mode is gui, on
-.IR 127.0.0.1:3000 .
-the gui provides the grouped file browser and command field; text mode provides an in-browser terminal with keybinds and a vim-style editor in jetbrains mono. both use the active theme. set
-.B CONFY_WEB_PASSWORD
-or pass
-.B --password
-to require basic authentication. use
-.B --ip
+environment variables. restoring a backup from
+.B :diff
+fires both the
+.B rolled_back
 and
-.B --port
-to choose another address. the built-in server uses http; use a tls reverse proxy when exposing it to a network. only tracked files are available.
-
-.SH REMOTE PROFILES
-.B :device <host>
-mounts the remote machine's entire root filesystem over sshfs, then switches confy's view to that host's tracked configs. this means absolute paths like
-.I /etc/pf.conf
-resolve correctly through the mount.
-
-if the remote is running an older version of confy (pre-config.toml, still on tracked.json), confy will refuse to connect and tell you to update confy on that host first.
-
-.B :su
-works through a mounted device: sshfs presents remote files under your own uid, so
-.B pkexec
-can elevate to local root and write through the mount even for root-owned remote files.
-
-for
-.B :su
-to work through a device mount, your local machine needs
-.I user_allow_other
-uncommented in
-.IR /etc/fuse.conf .
-confy will tell you if this is missing.
-
-.SH CONFIGURATION
-confy stores its state in
-.IR ~/.config/confy/config.toml .
-if upgrading from an older version that used
-.IR config.json ,
-confy keeps the old file, copies it to
-.I config.json.bak
-and migrates the contents into
-.I config.toml
-on first run. an even older
-.I tracked.json
-is migrated automatically too.
-
-.SS SETTINGS
-all settings live under the
-.I [settings]
-table in config.toml:
-
-.TP
-.B rollback
-boolean. save a backup before opening files for editing. default: true
-.TP
-.B theme
-string. active color theme name. default: "catppuccin"
-.TP
-.B editor
-string. override
-.B $EDITOR
-for opening files. useful for .desktop launchers where the env var may not be set.
-.TP
-.B streamer_mode
-boolean. hide full paths and timestamps in the file list. default: false
-.TP
-.B streamer_hide_git
-boolean. in streamer mode, also hide git-blacklisted files. default: true
-.TP
-.B ssh_allow
-boolean. enable the
-.B :device
-sshfs integration. set to false if you don't use it. default: true
-.TP
-.B background_enable
-boolean. draw a solid background color instead of the terminal default. default: false
-.TP
-.B background_color
-string. hex color for the background when background_enable is true. default: "#1e1e2e"
-.TP
-.B colors
-object. custom colors for the ui. supports hex codes (#rrggbb) and named colors
-.RB ( black ,
-.BR red ,
-.BR green ,
-.BR yellow ,
-.BR blue ,
-.BR magenta ,
-.BR cyan ,
-.BR white ,
-.BR default ).
-keys:
-.BR bg ,
-.BR fg ,
-.BR highlight ,
-.BR group ,
-.BR border .
-
-.SS GIT SETTINGS
-.TP
-.B git_dir
-string. path to the dotfiles git repository. default: "~/dotfiles-git"
-.TP
-.B git_blacklist
-array of strings. tracked file paths to exclude from
-.BR ":git sync" .
-.TP
-.B git_blacklist_groups
-array of strings. group names to exclude entirely from
-.BR ":git sync" .
-.TP
-.B git_auto_push
-boolean. reserved for future use. default: false
-.TP
-.B git_auto_commit
-boolean. reserved for future use. default: false
-
-.SH FILES
+.B restored
+events.
+.PP
+example:
+.nf
+[hooks]
+opened = []
+changed = ["notify-send 'confy' \"$CONFY_FILE changed\""]
+rolled_back = []
+restored = []
+tracked = []
+untracked = []
+.fi
+.SH files
 .TP
 .I ~/.config/confy/config.toml
-main configuration and tracked file list
+main configuration and tracked file data.
 .TP
-.I ~/.config/confy/config.json
-legacy config from older versions. kept for reference after migration.
-.TP
-.I ~/.config/confy/config.json.bak
-backup of the legacy config, created during migration
+.I ~/.config/confy/hooks.toml
+event hook commands.
 .TP
 .I ~/.config/confy/themes/
-custom theme definitions, one
-.I <name>.toml
-file per theme. each file uses the keys
-.BR bg ,
-.BR fg ,
-.BR highlight ,
-.BR group ,
-and
-.BR border .
-.TP
-.I ~/.cache/confy/mounts/
-sshfs mountpoints for remote device profiles
+custom theme files.
 .TP
 .I ~/.local/share/confy/backups/
-per-file rollback backups (gzip compressed, latest three retained)
-
-.SH ENVIRONMENT
-.TP
-.B EDITOR
-editor to open files with. overridden by the
-.I editor
-setting in config.toml. falls back to
-.BR nano (1)
-if neither is set.
-
-.SH EXAMPLES
-.nf
-# add a config file
-:ac hyprland
-
-# move it to a group
-:mg hyprland
-
-# search for a file
-/hypr
-
-# roll back after breaking something
-:rb
-
-# switch theme
-:theme gruvbox
-
-# browse a remote server's configs
-:device myserver
-:su
-:device local
-
-# set up dotfiles repo
-:git dir ~/dotfiles
-:git commit
-
-# blacklist your .env before pushing
-:bl
-:git push
-.fi
-
-.SH SEE ALSO
+compressed backups used by rollback and the diff browser. confy retains up to three backups per tracked file.
+.SH dependencies
+the core interface has no runtime dependencies beyond the system terminal. remote profiles require
+.BR sshfs (1),
+elevated editing requires
+.BR pkexec (1),
+and git operations require
+.BR git (1).
+remote elevated editing may also require
+.B user_allow_other
+in
+.IR /etc/fuse.conf .
+.SH see also
 .BR sshfs (1),
 .BR pkexec (1),
 .BR git (1)
-
-.SH BUGS
-report bugs at https://github.com/confyorg/confy/issues
-
-.SH AUTHOR
-phluxjr
-
-.SH LICENSE
-GPL-3.0-or-later
+.SH authors
+written by phluxjr.
+.SH bugs
+report issues at
+.I https://github.com/phluxjr/confy/issues
